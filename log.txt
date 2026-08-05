@@ -1,0 +1,24 @@
+I (1300) audio: rx bytes=2048 frames=512 ch=L L[-1285,1454] abs=503 rms=590 clip=0 R[-1479,1489] abs=444 rms=557 clip=0 S[-1215,1433] abs=501 rms=588 clip=0
+I (2320) audio: rx bytes=2048 frames=512 ch=L L[-2617,525] abs=1150 rms=1316 clip=0 R[-2565,275] abs=1032 rms=1175 clip=0 S[-2577,447] abs=1148 rms=1315 clip=0
+I (3340) audio: rx bytes=2048 frames=512 ch=L L[-1454,2980] abs=891 rms=1101 clip=0 R[-1334,2989] abs=856 rms=1072 clip=0 S[-1363,2860] abs=890 rms=1099 clip=0
+I (4345) audio: rx bytes=2048 frames=512 ch=L L[-2250,2183] abs=942 rms=1064 clip=0 R[-2215,2290] abs=1020 rms=1107 clip=0 S[-2107,1934] abs=940 rms=1062 clip=0
+ aI (5309) psk-modem: mode=PSK63 rx=1000 Hz nco=1000 Hz peak=968 Hz rms=6017 active=1 reads=151 samples=38656 sq=1 lvl=41 agc=4644 dev=59 pk=5/4/4 warm=0 sym=299 bits=235 z=137 o=98 dd=4 ch=2 unk=0
+I (5365) audio: rx bytes=2048 frames=512 ch=L L[-14113,13157] abs=6258 rms=7423 clip=0 R[-32768,32767] abs=23559 rms=26144 clip=244 S[-13373,12382] abs=6246 rms=7283 clip=0
+Cituae wouI (6385) audio: rx bytes=2048 frames=512 ch=L L[-12296,11425] abs=5624 rms=6564 clip=0 R[-32768,32767] abs=22080 rms=24725 clip=183 S[-11950,11403] abs=5431 rms=6442 clip=0
+ld emp%I (7405) audio: rx bytes=2048 frames=512 ch=L L[-12793,11796] abs=5592 rms=6579 clip=0 R[-32768,32767] abs=22546 rms=25173 clip=195 S[-12741,11461] abs=5437 rms=6456 clip=0
+ze sharplI (8410) audio: rx bytes=2048 frames=512 ch=L L[-12041,11860] abs=5504 rms=6461 clip=0 R[-32768,32767] abs=22327 rms=24970 clip=192 S[-11926,11696] abs=5351 rms=6343 clip=0
+y  Oe valueI (9430) audio: rx bytes=2048 frames=512 ch=L L[-11395,13465] abs=5412 rms=6375 clip=0 R[-32768,32767] abs=21778 rms=24463 clip=178 S[-11244,13218] abs=5295 rms=6261 clip=0
+s of lifeI (10334) psk-modem: mode=PSK63 rx=1000 Hz nco=1000 Hz peak=968 Hz rms=5805 active=1 reads=157 samples=40192 sq=1 lvl=73 agc=4921 dev=27 pk=0/15/15 warm=0 sym=614 bits=550 z=283 o=267 dd=51 ch=48 unk=0
+. I (10450) audio: rx bytes=2048 frames=512 ch=L L[-11920,12559] abs=5705 rms=6653 clip=0 R[-32768,32767] abs=22489 rms=25093 clip=194 S[-11775,12234] abs=5553 rms=6529 clip=0
+We should I (11470) audio: rx bytes=2048 frames=512 ch=L L[-11968,13071] abs=6958 rms=7775 clip=0 R[-32768,32767] abs=26036 rms=27706 clip=251 S[-11924,13059] abs=6654 rms=7627 clip=0
+live each dI (12505) audio: rx bytes=2048 frames=512 ch=L L[-13210,13425] abs=6122 rms=7177 clip=0 R[-32768,32767] abs=22698 rms=25283 clip=194 S[-13101,13381] abs=5909 rms=7043 clip=0
+ay with geI (13525) audio: rx bytes=2048 frames=512 ch=L L[-12692,12798] abs=6002 rms=6996 clip=0 R[-32768,32767] abs=22803 rms=25349 clip=195 S[-12337,12726] abs=5777 rms=6864 clip=0
+ntleness, vI (14545) audio: rx bytes=2048 frames=512 ch=L L[-6728,7428] abs=1722 rms=2427 clip=0 R[-29312,30758] abs=5745 rms=10180 clip=0 S[-6644,7415] abs=1697 rms=2392 clip=0
+i    iIaI (15344) psk-modem: mode=PSK63 rx=1000 Hz nco=1000 Hz peak=31 Hz rms=1387 active=1 reads=157 samples=40192 sq=1 lvl=52 agc=1001 dev=48 pk=1/1/1 warm=0 sym=931 bits=867 z=441 o=426 dd=109 ch=100 unk=0
+tI (15565) audio: rx bytes=2048 frames=512 ch=L L[-2564,2186] abs=918 rms=1124 clip=0 R[-2548,1578] abs=866 rms=1071 clip=0 S[-2479,2139] abs=916 rms=1122 clip=0
+ut%htI (16570) audio: rx bytes=2048 frames=512 ch=L L[-1954,3352] abs=986 rms=1242 clip=0 R[-2000,3314] abs=976 rms=1222 clip=0 S[-1879,3300] abs=984 rms=1240 clip=0
+aI (17590) audio: rx bytes=2048 frames=512 ch=L L[-2489,3043] abs=1090 rms=1316 clip=0 R[-2358,2735] abs=942 rms=1172 clip=0 S[-2456,3035] abs=1089 rms=1315 clip=0
+I (18610) audio: rx bytes=2048 frames=512 ch=L L[-2337,1864] abs=1006 rms=1199 clip=0 R[-2354,2237] abs=936 rms=1125 clip=0 S[-2306,1780] abs=1005 rms=1198 clip=0
+I (19630) audio: rx bytes=2048 frames=512 ch=L L[-2593,252] abs=971 rms=1194 clip=0 R[-2533,114] abs=1092 rms=1238 clip=0 S[-2587,222] abs=970 rms=1193 clip=0
+I (20369) psk-modem: mode=PSK63 rx=1000 Hz nco=1000 Hz peak=31 Hz rms=1911 active=1 reads=157 samples=40192 sq=0 lvl=1 agc=21 dev=99 pk=15/15/15 warm=0 sym=1247 bits=1183 z=625 o=558 dd=122 ch=108 unk=0
+I (20665) audio: rx bytes=2048 frames=512 ch=L L[-1634,2436] abs=767 rms=940 clip=0 R[-1670,2196] abs=680 rms=803 clip=0 S[-1609,2433] abs=765 rms=937 clip=0

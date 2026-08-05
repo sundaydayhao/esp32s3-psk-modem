@@ -1,8 +1,7 @@
-# ESP32-C3 PSK Modem
+# ESP32-S3 PSK Modem
 
-ESP-IDF project for the LCKFB SZPI ESP32-C3 board used as an audio-input
-digital-mode receiver. The hardware plan is to remove R27/R28 and R31/R32,
-then inject AM receiver audio into the board ADC path.
+ESP-IDF project for an ESP32-S3 board used as an audio-input digital-mode
+receiver.
 
 The firmware is structured around the modes present in `nuepsk_source`:
 
@@ -44,9 +43,8 @@ portable ESP32 code.
 
 ## Hardware Defaults
 
-Pin assignments are taken from
-`C:\projects\lichuang-esp32c3-demo\08-spi_lcd_touch\spi_lcd_touch` and
-`02-gpio_key`.
+Pin assignments are kept in `main/board_config.h`. They must match your
+ESP32-S3 board, LCD, touch controller, and audio codec wiring.
 
 Edit `main/board_config.h` if your board revision is different:
 
@@ -65,9 +63,7 @@ Current display/touch defaults:
 ## Build
 
 ```powershell
-C:\WINDOWS\System32\WindowsPowerShell\v1.0\powershell.exe -ExecutionPolicy Bypass -NoProfile
-. C:\Espressif\tools\Microsoft.v6.0.2.PowerShell_profile.ps1
-$env:PATH='C:\Espressif\tools\tools\riscv32-esp-elf\esp-16.1.0_20260609\riscv32-esp-elf\bin;' + $env:PATH
-idf.py set-target esp32c3
+C:\WINDOWS\System32\WindowsPowerShell\v1.0\powershell.exe -NoExit -ExecutionPolicy Bypass -NoProfile -Command "& {. 'C:\Espressif\tools\Microsoft.v6.0.2.PowerShell_profile.ps1'}"
+idf.py set-target esp32s3
 idf.py build
 ```

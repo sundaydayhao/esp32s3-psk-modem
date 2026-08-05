@@ -17,6 +17,7 @@
 #include "ui.h"
 
 static const char *TAG = "psk-modem";
+#define TWO_PI_F 6.28318530717958647692f
 
 typedef struct {
     char text[96];
@@ -66,7 +67,7 @@ static void audio_task(void *arg)
         .mode = MODEM_MODE_PSK63,
         .sample_rate_hz = BOARD_MODEM_SAMPLE_RATE_HZ,
         .rx_tone_hz = 1000,
-        .squelch = 70,
+        .squelch = 30,
     };
     modem_init(&modem, &modem_config);
 
@@ -76,6 +77,7 @@ static void audio_task(void *arg)
     uint32_t reads_this_second = 0;
     uint32_t samples_this_second = 0;
     int32_t last_rms = 0;
+    int last_peak_hz = 0;
     bool last_active = false;
     bool decoder_active = false;
     int active_hold_blocks = 0;
@@ -127,10 +129,16 @@ static void audio_task(void *arg)
         if (now_us - last_status_log_us >= 5000000) {
             last_status_log_us = now_us;
             const nuepsk_rx_t *rx = &modem.nue_rx;
+            spectrum_t debug_spectrum;
+            spectrum_analyze(samples, count, BOARD_MODEM_SAMPLE_RATE_HZ, &debug_spectrum);
+            last_peak_hz = debug_spectrum.peak_hz;
+            const int nco_hz = (int)lrintf((rx->nco_phase_inc + rx->freq_error) *
+                                           (float)rx->config.sample_rate_hz / TWO_PI_F);
             ESP_LOGI(TAG,
-                     "mode=%s rx=%d Hz rms=%d active=%d reads=%u samples=%u sq=%d lvl=%d agc=%d dev=%d pk=%d/%d/%d warm=%d sym=%u bits=%u z=%u o=%u dd=%u ch=%u unk=%u",
+                     "mode=%s rx=%d Hz nco=%d Hz peak=%d Hz rms=%d active=%d reads=%u samples=%u sq=%d lvl=%d agc=%d dev=%d pk=%d/%d/%d warm=%d sym=%u bits=%u z=%u o=%u dd=%u ch=%u unk=%u",
                      modem_mode_name(modem_get_mode(&modem)), modem_get_rx_tone(&modem),
-                     (int)last_rms, last_active, (unsigned)reads_this_second, (unsigned)samples_this_second,
+                     nco_hz, last_peak_hz, (int)last_rms, last_active,
+                     (unsigned)reads_this_second, (unsigned)samples_this_second,
                      rx->sq_open, rx->sq_level, (int)rx->agc_ave, (int)rx->dev_ave,
                      rx->pk_pos, rx->new_pk_pos, rx->raw_pk_pos, rx->warmup_symbols,
                      (unsigned)rx->debug_symbols, (unsigned)rx->debug_bits,
@@ -214,7 +222,7 @@ void app_main(void)
     xTaskCreate(audio_task, "psk_audio", 8192, NULL, 8, NULL);
     xTaskCreate(ui_task, "psk_ui", 6144, NULL, 2, NULL);
 
-    ESP_LOGI(TAG, "ESP32-C3 PSK modem started");
+    ESP_LOGI(TAG, "ESP32-S3 PSK modem started");
 
     while (true) {
         vTaskDelay(pdMS_TO_TICKS(1000));

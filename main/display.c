@@ -48,24 +48,24 @@ static bool notify_lvgl_flush_ready(esp_lcd_panel_io_handle_t panel_io,
 static void update_lcd_and_touch_rotation(lv_disp_drv_t *drv)
 {
     esp_lcd_panel_handle_t panel_handle = (esp_lcd_panel_handle_t)drv->user_data;
-    bool swap_xy = false;
-    bool mirror_x = false;
-    bool mirror_y = false;
+    bool swap_xy = BOARD_LCD_SWAP_XY;
+    bool mirror_x = BOARD_LCD_MIRROR_X;
+    bool mirror_y = BOARD_LCD_MIRROR_Y;
 
     switch (drv->rotated) {
     case LV_DISP_ROT_NONE:
         break;
     case LV_DISP_ROT_90:
-        swap_xy = true;
-        mirror_y = true;
+        swap_xy = !swap_xy;
+        mirror_y = !mirror_y;
         break;
     case LV_DISP_ROT_180:
-        mirror_x = true;
-        mirror_y = true;
+        mirror_x = !mirror_x;
+        mirror_y = !mirror_y;
         break;
     case LV_DISP_ROT_270:
-        swap_xy = true;
-        mirror_x = true;
+        swap_xy = !swap_xy;
+        mirror_x = !mirror_x;
         break;
     }
 
@@ -244,6 +244,7 @@ esp_err_t display_init(void)
 {
     i2c_master_bus_handle_t touch_i2c_bus = NULL;
     ESP_ERROR_CHECK(board_i2c_get_bus(&touch_i2c_bus));
+    ESP_ERROR_CHECK(board_pca9557_init());
 
     gpio_config_t bk_gpio_config = {
         .mode = GPIO_MODE_OUTPUT,
@@ -269,7 +270,7 @@ esp_err_t display_init(void)
         .pclk_hz = BOARD_LCD_PIXEL_CLOCK_HZ,
         .lcd_cmd_bits = 8,
         .lcd_param_bits = 8,
-        .spi_mode = 0,
+        .spi_mode = BOARD_LCD_SPI_MODE,
         .trans_queue_depth = 10,
         .on_color_trans_done = notify_lvgl_flush_ready,
         .user_ctx = &disp_drv,
@@ -284,10 +285,11 @@ esp_err_t display_init(void)
     };
     ESP_ERROR_CHECK(esp_lcd_new_panel_st7789(io_handle, &panel_config, &panel_handle));
     ESP_ERROR_CHECK(esp_lcd_panel_reset(panel_handle));
+    ESP_ERROR_CHECK(board_lcd_cs_set(false));
     ESP_ERROR_CHECK(esp_lcd_panel_init(panel_handle));
     ESP_ERROR_CHECK(esp_lcd_panel_invert_color(panel_handle, true));
-    ESP_ERROR_CHECK(esp_lcd_panel_mirror(panel_handle, false, false));
-    ESP_ERROR_CHECK(esp_lcd_panel_swap_xy(panel_handle, false));
+    ESP_ERROR_CHECK(esp_lcd_panel_swap_xy(panel_handle, BOARD_LCD_SWAP_XY));
+    ESP_ERROR_CHECK(esp_lcd_panel_mirror(panel_handle, BOARD_LCD_MIRROR_X, BOARD_LCD_MIRROR_Y));
     ESP_ERROR_CHECK(esp_lcd_panel_set_gap(panel_handle, 0, 0));
     ESP_ERROR_CHECK(esp_lcd_panel_disp_on_off(panel_handle, true));
     gpio_set_level(BOARD_LCD_PIN_BL, BOARD_LCD_BL_ON_LEVEL);
@@ -302,13 +304,21 @@ esp_err_t display_init(void)
         .y_max = BOARD_LCD_HEIGHT,
         .rst_gpio_num = GPIO_NUM_NC,
         .int_gpio_num = BOARD_TOUCH_PIN_INT,
+        .levels = {
+            .reset = 0,
+            .interrupt = 0,
+        },
         .flags = {
-            .swap_xy = 0,
-            .mirror_x = 0,
-            .mirror_y = 0,
+            .swap_xy = BOARD_LCD_SWAP_XY,
+            .mirror_x = BOARD_LCD_MIRROR_X,
+            .mirror_y = BOARD_LCD_MIRROR_Y,
         },
     };
-    ESP_ERROR_CHECK(esp_lcd_touch_new_i2c_ft5x06(tp_io_handle, &tp_cfg, &s_touch));
+    esp_err_t touch_err = esp_lcd_touch_new_i2c_ft5x06(tp_io_handle, &tp_cfg, &s_touch);
+    if (touch_err != ESP_OK) {
+        ESP_LOGW(TAG, "touch init failed: %s; continuing without touch", esp_err_to_name(touch_err));
+        s_touch = NULL;
+    }
 
     lv_init();
     lv_color_t *buf1 = heap_caps_malloc(BOARD_LCD_WIDTH * 20 * sizeof(lv_color_t), MALLOC_CAP_DMA);
@@ -327,13 +337,15 @@ esp_err_t display_init(void)
     lv_disp_t *disp = lv_disp_drv_register(&disp_drv);
     update_lcd_and_touch_rotation(&disp_drv);
 
-    static lv_indev_drv_t indev_drv;
-    lv_indev_drv_init(&indev_drv);
-    indev_drv.type = LV_INDEV_TYPE_POINTER;
-    indev_drv.disp = disp;
-    indev_drv.read_cb = lvgl_touch_cb;
-    indev_drv.user_data = s_touch;
-    lv_indev_drv_register(&indev_drv);
+    if (s_touch) {
+        static lv_indev_drv_t indev_drv;
+        lv_indev_drv_init(&indev_drv);
+        indev_drv.type = LV_INDEV_TYPE_POINTER;
+        indev_drv.disp = disp;
+        indev_drv.read_cb = lvgl_touch_cb;
+        indev_drv.user_data = s_touch;
+        lv_indev_drv_register(&indev_drv);
+    }
 
     const esp_timer_create_args_t lvgl_tick_timer_args = {
         .callback = increase_lvgl_tick,

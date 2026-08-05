@@ -6,38 +6,41 @@
 #include "board_config.h"
 #include "board_i2c.h"
 #include "driver/i2s_std.h"
+#include "driver/i2s_tdm.h"
 #include "esp_check.h"
 #include "esp_log.h"
 #include "esp_timer.h"
-#include "es8311.h"
+#include "es7210.h"
 
 static const char *TAG = "audio";
 static i2s_chan_handle_t s_rx_handle;
-static es8311_handle_t s_codec;
+static es7210_dev_handle_t s_codec;
 
 static esp_err_t codec_i2c_init(void)
 {
     i2c_master_bus_handle_t i2c_bus = NULL;
     ESP_RETURN_ON_ERROR(board_i2c_get_bus(&i2c_bus), TAG, "i2c bus");
 
-    s_codec = es8311_create(i2c_bus, ES8311_ADDRRES_0);
-    ESP_RETURN_ON_FALSE(s_codec, ESP_FAIL, TAG, "es8311 create failed");
-
-    const es8311_clock_config_t es_clk = {
-        .mclk_inverted = false,
-        .sclk_inverted = false,
-        .mclk_from_mclk_pin = true,
-        .mclk_frequency = BOARD_CODEC_SAMPLE_RATE_HZ * BOARD_AUDIO_MCLK_MULTIPLE,
-        .sample_frequency = BOARD_CODEC_SAMPLE_RATE_HZ,
+    const es7210_i2c_config_t i2c_conf = {
+        .i2c_bus = i2c_bus,
+        .i2c_addr = BOARD_ES7210_I2C_ADDR,
+        .scl_speed_hz = BOARD_I2C_SPEED_HZ,
     };
+    ESP_RETURN_ON_ERROR(es7210_new_codec(&i2c_conf, &s_codec), TAG, "es7210 create");
 
-    ESP_RETURN_ON_ERROR(es8311_init(s_codec, &es_clk, ES8311_RESOLUTION_16, ES8311_RESOLUTION_16), TAG, "es8311 init");
-    ESP_RETURN_ON_ERROR(es8311_sample_frequency_config(s_codec, BOARD_CODEC_SAMPLE_RATE_HZ * BOARD_AUDIO_MCLK_MULTIPLE,
-                                                       BOARD_CODEC_SAMPLE_RATE_HZ),
-                        TAG, "es8311 sample rate");
-    ESP_RETURN_ON_ERROR(es8311_voice_volume_set(s_codec, 70, NULL), TAG, "es8311 volume");
-    ESP_RETURN_ON_ERROR(es8311_microphone_config(s_codec, false), TAG, "es8311 mic config");
-    ESP_RETURN_ON_ERROR(es8311_microphone_gain_set(s_codec, ES8311_MIC_GAIN_24DB), TAG, "es8311 mic gain");
+    const es7210_codec_config_t codec_conf = {
+        .sample_rate_hz = BOARD_CODEC_SAMPLE_RATE_HZ,
+        .mclk_ratio = BOARD_AUDIO_MCLK_MULTIPLE,
+        .i2s_format = ES7210_I2S_FMT_I2S,
+        .bit_width = ES7210_I2S_BITS_16B,
+        .mic_bias = ES7210_MIC_BIAS_2V87,
+        .mic_gain = ES7210_MIC_GAIN_30DB,
+        .flags = {
+            .tdm_enable = true,
+        },
+    };
+    ESP_RETURN_ON_ERROR(es7210_config_codec(s_codec, &codec_conf), TAG, "es7210 config");
+    ESP_RETURN_ON_ERROR(es7210_config_volume(s_codec, BOARD_ES7210_ADC_VOLUME_DB), TAG, "es7210 volume");
     return ESP_OK;
 }
 
@@ -47,25 +50,25 @@ static esp_err_t i2s_driver_init(void)
     chan_cfg.auto_clear = true;
     ESP_RETURN_ON_ERROR(i2s_new_channel(&chan_cfg, NULL, &s_rx_handle), TAG, "i2s channel");
 
-    i2s_std_config_t std_cfg = {
-        .clk_cfg = I2S_STD_CLK_DEFAULT_CONFIG(BOARD_CODEC_SAMPLE_RATE_HZ),
-        .slot_cfg = I2S_STD_PHILIPS_SLOT_DEFAULT_CONFIG(I2S_DATA_BIT_WIDTH_16BIT, I2S_SLOT_MODE_STEREO),
+    i2s_tdm_config_t tdm_cfg = {
+        .clk_cfg = {
+            .clk_src = I2S_CLK_SRC_DEFAULT,
+            .sample_rate_hz = BOARD_CODEC_SAMPLE_RATE_HZ,
+            .mclk_multiple = BOARD_AUDIO_MCLK_MULTIPLE,
+        },
+        .slot_cfg = I2S_TDM_PHILIPS_SLOT_DEFAULT_CONFIG(I2S_DATA_BIT_WIDTH_16BIT,
+                                                        I2S_SLOT_MODE_STEREO,
+                                                        I2S_TDM_SLOT0 | I2S_TDM_SLOT1),
         .gpio_cfg = {
             .mclk = BOARD_AUDIO_I2S_MCLK,
             .bclk = BOARD_AUDIO_I2S_BCLK,
             .ws = BOARD_AUDIO_I2S_WS,
-            .dout = BOARD_AUDIO_I2S_DOUT,
+            .dout = GPIO_NUM_NC,
             .din = BOARD_AUDIO_I2S_DIN,
-            .invert_flags = {
-                .mclk_inv = false,
-                .bclk_inv = false,
-                .ws_inv = false,
-            },
         },
     };
-    std_cfg.clk_cfg.mclk_multiple = BOARD_AUDIO_MCLK_MULTIPLE;
 
-    ESP_RETURN_ON_ERROR(i2s_channel_init_std_mode(s_rx_handle, &std_cfg), TAG, "i2s init");
+    ESP_RETURN_ON_ERROR(i2s_channel_init_tdm_mode(s_rx_handle, &tdm_cfg), TAG, "i2s tdm init");
     ESP_RETURN_ON_ERROR(i2s_channel_enable(s_rx_handle), TAG, "i2s enable");
     return ESP_OK;
 }
@@ -74,7 +77,7 @@ esp_err_t audio_input_init(void)
 {
     ESP_RETURN_ON_ERROR(i2s_driver_init(), TAG, "i2s driver init");
     ESP_RETURN_ON_ERROR(codec_i2c_init(), TAG, "codec init");
-    ESP_LOGI(TAG, "ES8311/I2S audio backend ready: codec %d Hz, modem %d Hz",
+    ESP_LOGI(TAG, "ES7210/I2S TDM audio backend ready: codec %d Hz, modem %d Hz",
              BOARD_CODEC_SAMPLE_RATE_HZ, BOARD_MODEM_SAMPLE_RATE_HZ);
     return ESP_OK;
 }
@@ -143,7 +146,7 @@ size_t audio_input_read(int16_t *samples, size_t max_samples, uint32_t timeout_m
         }
     }
 
-    const bool use_left = l_abs_sum >= r_abs_sum;
+    const bool use_left = BOARD_AUDIO_INPUT_CHANNEL == 0;
     int16_t s_min = INT16_MAX;
     int16_t s_max = INT16_MIN;
     int64_t s_abs_sum = 0;
