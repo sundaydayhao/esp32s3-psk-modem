@@ -14,6 +14,7 @@
 #include "freertos/task.h"
 #include "modem.h"
 #include "spectrum.h"
+#include "transport.h"
 #include "ui.h"
 
 static const char *TAG = "psk-modem";
@@ -21,6 +22,7 @@ static const char *TAG = "psk-modem";
 
 typedef struct {
     char text[96];
+    size_t len;
 } decoded_msg_t;
 
 typedef struct {
@@ -49,6 +51,9 @@ static void apply_control_event(modem_t *modem, const ui_event_t *event)
     switch (event->type) {
     case UI_EVENT_MODE_CHANGED:
         modem_set_mode(modem, event->mode);
+        break;
+    case UI_EVENT_TRANSPORT_CHANGED:
+        transport_set_mode(event->transport_mode);
         break;
     case UI_EVENT_TONE_CHANGED:
         modem_set_rx_tone(modem, event->tone_hz);
@@ -114,21 +119,28 @@ static void audio_task(void *arg)
                 decoder_active = false;
             }
 
-            if ((last_active || active_hold_blocks > 0) &&
-                modem_process(&modem, samples, count, decoded, sizeof(decoded)) > 0) {
-                printf("%s", decoded);
-                fflush(stdout);
+            if (last_active || active_hold_blocks > 0) {
+                const size_t decoded_len = modem_process(&modem, samples, count, decoded, sizeof(decoded));
+                if (decoded_len > 0) {
+                    transport_send((const uint8_t *)decoded, decoded_len);
 
-                decoded_msg_t msg = {0};
-                strlcpy(msg.text, decoded, sizeof(msg.text));
-                (void)xQueueSend(s_decoded_queue, &msg, 0);
+                    decoded_msg_t msg = {0};
+                    msg.len = decoded_len;
+                    const size_t shown = decoded_len < sizeof(msg.text) - 1 ? decoded_len : sizeof(msg.text) - 1;
+                    for (size_t i = 0; i < shown; ++i) {
+                        const unsigned char ch = (unsigned char)decoded[i];
+                        msg.text[i] = (ch >= 0x20 && ch < 0x7f) || ch == '\r' || ch == '\n' ? (char)ch : '.';
+                    }
+                    msg.text[shown] = '\0';
+                    (void)xQueueSend(s_decoded_queue, &msg, 0);
+                }
             }
         }
 
 #if BOARD_MODEM_DEBUG_LOGS
         if (now_us - last_status_log_us >= 5000000) {
             last_status_log_us = now_us;
-            const nuepsk_rx_t *rx = &modem.nue_rx;
+            const psk_rtty_rx_t *rx = &modem.decoder.psk_rtty_rx;
             spectrum_t debug_spectrum;
             spectrum_analyze(samples, count, BOARD_MODEM_SAMPLE_RATE_HZ, &debug_spectrum);
             last_peak_hz = debug_spectrum.peak_hz;
@@ -164,6 +176,7 @@ static void ui_task(void *arg)
 {
     display_state_t display_state = {
         .selected_mode = MODEM_MODE_PSK63,
+        .transport_mode = TRANSPORT_MODE_USB_SERIAL,
         .rx_tone_hz = 1000,
     };
     spectrum_t spectrum = {0};
@@ -184,6 +197,20 @@ static void ui_task(void *arg)
             break;
         case UI_EVENT_MODE_CHANGED:
             display_state.selected_mode = event.mode;
+            if (display_state.rx_tone_hz < modem_mode_band_min_hz(event.mode) ||
+                display_state.rx_tone_hz > modem_mode_band_max_hz(event.mode)) {
+                display_state.rx_tone_hz = (modem_mode_band_min_hz(event.mode) +
+                                           modem_mode_band_max_hz(event.mode)) / 2;
+                ui_event_t tone_event = {
+                    .type = UI_EVENT_TONE_CHANGED,
+                    .tone_hz = display_state.rx_tone_hz,
+                };
+                (void)xQueueSend(s_control_queue, &tone_event, 0);
+            }
+            (void)xQueueSend(s_control_queue, &event, 0);
+            break;
+        case UI_EVENT_TRANSPORT_CHANGED:
+            display_state.transport_mode = event.transport_mode;
             (void)xQueueSend(s_control_queue, &event, 0);
             break;
         case UI_EVENT_TONE_CHANGED:
@@ -212,6 +239,7 @@ void app_main(void)
 {
     ESP_ERROR_CHECK(display_init());
     ESP_ERROR_CHECK(ui_init());
+    ESP_ERROR_CHECK(transport_init(TRANSPORT_MODE_USB_SERIAL));
     ESP_ERROR_CHECK(audio_input_init());
 
     s_decoded_queue = xQueueCreate(8, sizeof(decoded_msg_t));

@@ -4,57 +4,47 @@
 
 static const char *const s_mode_names[MODEM_MODE_COUNT] = {
     "BPSK31",
-    "QPSK31-U",
-    "QPSK31-L",
-    "RTTY",
     "PSK63",
+    "FT8",
+    "FT4",
+    "RTTY",
+    "CW",
+    "MFSK16",
 };
 
-static nuepsk_mode_t to_nue_mode(modem_mode_t mode)
-{
-    switch (mode) {
-    case MODEM_MODE_QPSK31_USB:
-        return NUEPSK_MODE_QPSK31_USB;
-    case MODEM_MODE_QPSK31_LSB:
-        return NUEPSK_MODE_QPSK31_LSB;
-    case MODEM_MODE_PSK63:
-        return NUEPSK_MODE_PSK63;
-    case MODEM_MODE_RTTY:
-        return NUEPSK_MODE_RTTY;
-    case MODEM_MODE_BPSK31:
-    default:
-        return NUEPSK_MODE_BPSK31;
-    }
-}
-
-static void on_nue_char(char c, void *userdata)
+static void on_decoder_bytes(const uint8_t *data, size_t len, void *userdata)
 {
     modem_t *m = (modem_t *)userdata;
-    if (!m->out || m->out_len + 1 >= m->out_size) {
+    if (!m->out || !data || len == 0 || m->out_len >= m->out_size) {
         return;
     }
-    m->out[m->out_len++] = c;
+    const size_t room = m->out_size - m->out_len - 1;
+    if (len > room) {
+        len = room;
+    }
+    memcpy(m->out + m->out_len, data, len);
+    m->out_len += len;
     m->out[m->out_len] = '\0';
 }
 
-static void recreate_nue_rx(modem_t *m)
+static void recreate_decoder(modem_t *m)
 {
-    nuepsk_config_t config = {
-        .mode = to_nue_mode(m->config.mode),
+    decoder_layer_config_t config = {
+        .mode = m->config.mode,
         .sample_rate_hz = m->config.sample_rate_hz,
         .rx_tone_hz = m->config.rx_tone_hz,
-        .char_cb = on_nue_char,
+        .squelch = m->config.squelch,
+        .emit_cb = on_decoder_bytes,
         .userdata = m,
     };
-    nuepsk_rx_init(&m->nue_rx, &config);
-    m->nue_rx.sq_thresh = m->config.squelch;
+    decoder_layer_init(&m->decoder, &config);
 }
 
 void modem_init(modem_t *m, const modem_config_t *config)
 {
     memset(m, 0, sizeof(*m));
     m->config = *config;
-    recreate_nue_rx(m);
+    recreate_decoder(m);
 }
 
 void modem_set_mode(modem_t *m, modem_mode_t mode)
@@ -63,7 +53,7 @@ void modem_set_mode(modem_t *m, modem_mode_t mode)
         return;
     }
     m->config.mode = mode;
-    recreate_nue_rx(m);
+    decoder_layer_set_mode(&m->decoder, mode);
 }
 
 void modem_set_rx_tone(modem_t *m, int tone_hz)
@@ -74,7 +64,7 @@ void modem_set_rx_tone(modem_t *m, int tone_hz)
         tone_hz = 3500;
     }
     m->config.rx_tone_hz = tone_hz;
-    recreate_nue_rx(m);
+    decoder_layer_set_tone(&m->decoder, tone_hz);
 }
 
 modem_mode_t modem_get_mode(const modem_t *m)
@@ -85,6 +75,25 @@ modem_mode_t modem_get_mode(const modem_t *m)
 const char *modem_mode_name(modem_mode_t mode)
 {
     return mode < MODEM_MODE_COUNT ? s_mode_names[mode] : "?";
+}
+
+int modem_mode_band_min_hz(modem_mode_t mode)
+{
+    const int center = 1500;
+    const int half = demod_profile_for_mode(mode)->bandwidth_hz / 2;
+    return center - half;
+}
+
+int modem_mode_band_max_hz(modem_mode_t mode)
+{
+    const int center = 1500;
+    const int half = demod_profile_for_mode(mode)->bandwidth_hz / 2;
+    return center + half;
+}
+
+int modem_mode_decoder_available(modem_mode_t mode)
+{
+    return mode < MODEM_MODE_COUNT;
 }
 
 int modem_get_rx_tone(const modem_t *m)
@@ -102,7 +111,7 @@ size_t modem_process(modem_t *m, const int16_t *samples, size_t count, char *out
     m->out_size = out_size;
     m->out_len = 0;
 
-    nuepsk_rx_feed(&m->nue_rx, samples, count);
+    decoder_layer_feed(&m->decoder, samples, count);
     if (m->out_len > 0) {
         return m->out_len;
     }

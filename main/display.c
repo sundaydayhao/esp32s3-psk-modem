@@ -27,9 +27,13 @@ static lv_obj_t *s_status;
 static lv_obj_t *s_menu;
 static modem_mode_t s_pending_mode;
 static int s_has_pending_mode;
+static transport_mode_t s_pending_transport;
+static int s_has_pending_transport;
 static int s_pending_tone_hz;
 static int s_has_pending_tone;
 static esp_lcd_touch_handle_t s_touch;
+static int s_band_min_hz = 100;
+static int s_band_max_hz = 3500;
 
 #define WATERFALL_HEIGHT 120
 #define WATERFALL_ROWS_PER_FRAME 4
@@ -117,6 +121,12 @@ static void mode_button_cb(lv_event_t *event)
     s_has_pending_mode = 1;
 }
 
+static void transport_button_cb(lv_event_t *event)
+{
+    s_pending_transport = (transport_mode_t)(uintptr_t)lv_event_get_user_data(event);
+    s_has_pending_transport = 1;
+}
+
 static void spectrum_touch_cb(lv_event_t *event)
 {
     lv_point_t p;
@@ -129,7 +139,7 @@ static void spectrum_touch_cb(lv_event_t *event)
     } else if (rel_x >= width) {
         rel_x = width - 1;
     }
-    s_pending_tone_hz = 100 + (rel_x * 3400) / width;
+    s_pending_tone_hz = s_band_min_hz + (rel_x * (s_band_max_hz - s_band_min_hz)) / width;
     s_has_pending_tone = 1;
     (void)event;
 }
@@ -156,7 +166,9 @@ static lv_color_t waterfall_color(uint8_t power)
 
 static uint8_t waterfall_power_at_x(const spectrum_t *spectrum, int x)
 {
-    const int scaled = x * (SPECTRUM_BINS - 1) * 256 / (BOARD_LCD_WIDTH - 1);
+    const int nyquist_hz = BOARD_MODEM_SAMPLE_RATE_HZ / 2;
+    const int freq_hz = s_band_min_hz + (x * (s_band_max_hz - s_band_min_hz)) / (BOARD_LCD_WIDTH - 1);
+    const int scaled = freq_hz * (SPECTRUM_BINS - 1) * 256 / nyquist_hz;
     const int bin = scaled / 256;
     const int frac = scaled % 256;
     const int next = bin + 1 < SPECTRUM_BINS ? bin + 1 : bin;
@@ -180,7 +192,7 @@ static void waterfall_render_row(lv_color_t *buf, const spectrum_t *spectrum)
 
 static void update_tone_marker(int rx_tone_hz)
 {
-    int marker_x = ((rx_tone_hz - 100) * BOARD_LCD_WIDTH) / 3400;
+    int marker_x = ((rx_tone_hz - s_band_min_hz) * BOARD_LCD_WIDTH) / (s_band_max_hz - s_band_min_hz);
     if (marker_x < 0) {
         marker_x = 0;
     } else if (marker_x >= BOARD_LCD_WIDTH) {
@@ -229,13 +241,29 @@ static void create_ui(lv_disp_t *disp)
     lv_obj_set_style_pad_all(s_menu, 8, 0);
     lv_obj_add_flag(s_menu, LV_OBJ_FLAG_HIDDEN);
 
+    lv_obj_t *mode_title = lv_label_create(s_menu);
+    lv_label_set_text(mode_title, "Mode");
+
     for (modem_mode_t mode = 0; mode < MODEM_MODE_COUNT; ++mode) {
         lv_obj_t *btn = lv_btn_create(s_menu);
         lv_obj_set_width(btn, LV_PCT(100));
-        lv_obj_set_height(btn, 30);
+        lv_obj_set_height(btn, 24);
         lv_obj_add_event_cb(btn, mode_button_cb, LV_EVENT_CLICKED, (void *)(uintptr_t)mode);
         lv_obj_t *label = lv_label_create(btn);
         lv_label_set_text(label, modem_mode_name(mode));
+        lv_obj_center(label);
+    }
+
+    lv_obj_t *transport_title = lv_label_create(s_menu);
+    lv_label_set_text(transport_title, "Output");
+
+    for (transport_mode_t mode = 0; mode < TRANSPORT_MODE_COUNT; ++mode) {
+        lv_obj_t *btn = lv_btn_create(s_menu);
+        lv_obj_set_width(btn, LV_PCT(100));
+        lv_obj_set_height(btn, 24);
+        lv_obj_add_event_cb(btn, transport_button_cb, LV_EVENT_CLICKED, (void *)(uintptr_t)mode);
+        lv_obj_t *label = lv_label_create(btn);
+        lv_label_set_text(label, transport_mode_name(mode));
         lv_obj_center(label);
     }
 }
@@ -391,13 +419,17 @@ void display_render(const display_state_t *state, const spectrum_t *spectrum)
         canvas_ready = 1;
     }
 
+    s_band_min_hz = modem_mode_band_min_hz(state->selected_mode);
+    s_band_max_hz = modem_mode_band_max_hz(state->selected_mode);
+
     waterfall_render_row(canvas_buf, spectrum);
     lv_obj_invalidate(s_spectrum);
     update_tone_marker(state->rx_tone_hz);
 
     char status[64];
-    snprintf(status, sizeof(status), "%s  RX %d Hz  Peak %d Hz",
-             modem_mode_name(state->selected_mode), state->rx_tone_hz, spectrum->peak_hz);
+    snprintf(status, sizeof(status), "%s %s RX %d Hz Peak %d Hz",
+             modem_mode_name(state->selected_mode), transport_mode_name(state->transport_mode),
+             state->rx_tone_hz, spectrum->peak_hz);
     lv_label_set_text(s_status, status);
     lv_label_set_text(s_text, state->text);
     display_set_menu_open(state->menu_open);
@@ -422,6 +454,16 @@ int display_take_mode_selection(modem_mode_t *mode)
     }
     *mode = s_pending_mode;
     s_has_pending_mode = 0;
+    return 1;
+}
+
+int display_take_transport_selection(transport_mode_t *mode)
+{
+    if (!s_has_pending_transport) {
+        return 0;
+    }
+    *mode = s_pending_transport;
+    s_has_pending_transport = 0;
     return 1;
 }
 

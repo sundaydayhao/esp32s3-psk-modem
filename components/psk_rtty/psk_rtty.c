@@ -1,4 +1,4 @@
-#include "nuepsk.h"
+#include "psk_rtty.h"
 
 #include <math.h>
 #include <string.h>
@@ -44,22 +44,22 @@ static void init_tables(void)
     s_tables_ready = 1;
 }
 
-static float symbol_rate_for_mode(nuepsk_mode_t mode)
+static float symbol_rate_for_mode(psk_rtty_mode_t mode)
 {
     switch (mode) {
-    case NUEPSK_MODE_PSK63:
+    case PSK_RTTY_MODE_PSK63:
         return 62.5f;
-    case NUEPSK_MODE_RTTY:
+    case PSK_RTTY_MODE_RTTY:
         return 45.45f;
-    case NUEPSK_MODE_BPSK31:
-    case NUEPSK_MODE_QPSK31_USB:
-    case NUEPSK_MODE_QPSK31_LSB:
+    case PSK_RTTY_MODE_BPSK31:
+    case PSK_RTTY_MODE_QPSK31_USB:
+    case PSK_RTTY_MODE_QPSK31_LSB:
     default:
         return 31.25f;
     }
 }
 
-static void reset_runtime(nuepsk_rx_t *rx)
+static void reset_runtime(psk_rtty_rx_t *rx)
 {
     rx->nco_phase = 0.0f;
     rx->nco_phase_inc = TWO_PI * (float)rx->config.rx_tone_hz / (float)rx->config.sample_rate_hz;
@@ -94,7 +94,7 @@ static void reset_runtime(nuepsk_rx_t *rx)
     rx->new_pk_pos = 5;
     rx->raw_pk_pos = 5;
     rx->bit_pos = 0;
-    rx->warmup_symbols = rx->config.mode == NUEPSK_MODE_PSK63 ? 64 : 32;
+    rx->warmup_symbols = rx->config.mode == PSK_RTTY_MODE_PSK63 ? 64 : 32;
     rx->last_pk_pos = 0;
     rx->sq_open = 0;
     rx->sq_was_open = 0;
@@ -125,7 +125,7 @@ static void reset_runtime(nuepsk_rx_t *rx)
     memset(&rx->z2, 0, sizeof(rx->z2));
 }
 
-void nuepsk_rx_init(nuepsk_rx_t *rx, const nuepsk_config_t *config)
+void psk_rtty_rx_init(psk_rtty_rx_t *rx, const psk_rtty_config_t *config)
 {
     init_tables();
     memset(rx, 0, sizeof(*rx));
@@ -133,16 +133,16 @@ void nuepsk_rx_init(nuepsk_rx_t *rx, const nuepsk_config_t *config)
     reset_runtime(rx);
 }
 
-void nuepsk_rx_set_mode(nuepsk_rx_t *rx, nuepsk_mode_t mode)
+void psk_rtty_rx_set_mode(psk_rtty_rx_t *rx, psk_rtty_mode_t mode)
 {
-    if (mode >= NUEPSK_MODE_COUNT) {
+    if (mode >= PSK_RTTY_MODE_COUNT) {
         return;
     }
     rx->config.mode = mode;
     reset_runtime(rx);
 }
 
-void nuepsk_rx_set_tone(nuepsk_rx_t *rx, int tone_hz)
+void psk_rtty_rx_set_tone(psk_rtty_rx_t *rx, int tone_hz)
 {
     if (tone_hz < 100) {
         tone_hz = 100;
@@ -153,14 +153,14 @@ void nuepsk_rx_set_tone(nuepsk_rx_t *rx, int tone_hz)
     reset_runtime(rx);
 }
 
-static void emit(nuepsk_rx_t *rx, char c)
+static void emit(psk_rtty_rx_t *rx, char c)
 {
     if (c && rx->config.char_cb) {
         rx->config.char_cb(c, rx->config.userdata);
     }
 }
 
-static void push_varicode_bit(nuepsk_rx_t *rx, int bit)
+static void push_varicode_bit(psk_rtty_rx_t *rx, int bit)
 {
     if (bit == 0) {
         if (rx->last_bit_zero) {
@@ -189,7 +189,7 @@ static void push_varicode_bit(nuepsk_rx_t *rx, int bit)
     rx->bit_acc = (uint16_t)(((rx->bit_acc << 1) | 1U) & 0x07ffU);
 }
 
-static void push_rtty_bit(nuepsk_rx_t *rx, int bit)
+static void push_rtty_bit(psk_rtty_rx_t *rx, int bit)
 {
     if (rx->rtty_bit_index == 0) {
         if (bit == 0) {
@@ -220,7 +220,7 @@ static void push_rtty_bit(nuepsk_rx_t *rx, int bit)
     rx->rtty_bit_index = 0;
 }
 
-static void finish_symbol(nuepsk_rx_t *rx)
+static void finish_symbol(psk_rtty_rx_t *rx)
 {
     if (rx->samples_in_symbol == 0) {
         return;
@@ -236,7 +236,7 @@ static void finish_symbol(nuepsk_rx_t *rx)
     }
     rx->prev_symbol_phase = phase;
 
-    if (rx->config.mode == NUEPSK_MODE_RTTY) {
+    if (rx->config.mode == PSK_RTTY_MODE_RTTY) {
         push_rtty_bit(rx, rx->i_acc > 0.0f ? 1 : 0);
     } else {
         const int bit = fabsf(diff) > ((float)M_PI * 0.5f) ? 0 : 1;
@@ -248,9 +248,9 @@ static void finish_symbol(nuepsk_rx_t *rx)
     rx->samples_in_symbol = 0;
 }
 
-static nuepsk_complex_t fir_complex(const nuepsk_complex_t *queue, int newest, int length, const float *coef)
+static psk_rtty_complex_t fir_complex(const psk_rtty_complex_t *queue, int newest, int length, const float *coef)
 {
-    nuepsk_complex_t acc = {0.0f, 0.0f};
+    psk_rtty_complex_t acc = {0.0f, 0.0f};
     for (int i = 0; i < length; ++i) {
         const int coef_idx = (length - newest + i) % length;
         acc.x += queue[i].x * coef[coef_idx];
@@ -259,7 +259,7 @@ static nuepsk_complex_t fir_complex(const nuepsk_complex_t *queue, int newest, i
     return acc;
 }
 
-static void calc_bit_filter(nuepsk_rx_t *rx, nuepsk_complex_t sample)
+static void calc_bit_filter(psk_rtty_rx_t *rx, psk_rtty_complex_t sample)
 {
     rx->bit_queue[rx->bit_fir_state] = sample;
     rx->freq_signal = fir_complex(rx->bit_queue, rx->bit_fir_state, PSKCORE_BITFIR_LENGTH, s_freq_fir);
@@ -269,7 +269,7 @@ static void calc_bit_filter(nuepsk_rx_t *rx, nuepsk_complex_t sample)
     }
 }
 
-static void calc_agc(nuepsk_rx_t *rx)
+static void calc_agc(psk_rtty_rx_t *rx)
 {
     const float mag = sqrtf(rx->freq_signal.x * rx->freq_signal.x + rx->freq_signal.y * rx->freq_signal.y);
     if (mag > rx->agc_ave) {
@@ -286,7 +286,7 @@ static void calc_agc(nuepsk_rx_t *rx)
     }
 }
 
-static void calc_freq_error(nuepsk_rx_t *rx)
+static void calc_freq_error(psk_rtty_rx_t *rx)
 {
     const float p_gn = 0.001f;
     const float i_gn = 1.5e-6f;
@@ -330,7 +330,7 @@ static void calc_freq_error(nuepsk_rx_t *rx)
     }
 }
 
-static int symbol_sync(nuepsk_rx_t *rx, nuepsk_complex_t sample)
+static int symbol_sync(psk_rtty_rx_t *rx, psk_rtty_complex_t sample)
 {
     int trigger = 0;
     int bit_pos = rx->bit_pos;
@@ -391,7 +391,7 @@ static int symbol_sync(nuepsk_rx_t *rx, nuepsk_complex_t sample)
     return trigger;
 }
 
-static void calc_quality_bpsk(nuepsk_rx_t *rx, float angle)
+static void calc_quality_bpsk(psk_rtty_rx_t *rx, float angle)
 {
     const float phzderived_gn = 1.0f / 0.2f;
     float temp;
@@ -482,14 +482,14 @@ static void calc_quality_bpsk(nuepsk_rx_t *rx, float angle)
                     (phzderived_gn / rx->nlp_k) * rx->q_freq_error;
 }
 
-static void decode_bpsk_symbol(nuepsk_rx_t *rx, nuepsk_complex_t sample)
+static void decode_bpsk_symbol(psk_rtty_rx_t *rx, psk_rtty_complex_t sample)
 {
     rx->i1 = rx->i0;
     rx->q1 = rx->q0;
     rx->i0 = sample.x;
     rx->q0 = sample.y;
 
-    nuepsk_complex_t vect = {
+    psk_rtty_complex_t vect = {
         .x = rx->i1 * rx->q0 - rx->i0 * rx->q1,
         .y = rx->i1 * rx->i0 + rx->q1 * rx->q0,
     };
@@ -516,7 +516,7 @@ static void decode_bpsk_symbol(nuepsk_rx_t *rx, nuepsk_complex_t sample)
     push_varicode_bit(rx, bit);
 }
 
-static void pskcore_rx_feed(nuepsk_rx_t *rx, const int16_t *samples, size_t count)
+static void pskcore_rx_feed(psk_rtty_rx_t *rx, const int16_t *samples, size_t count)
 {
     if (rx->afc_timer > 0 && --rx->afc_timer <= 0) {
         rx->afc_timer = 0;
@@ -527,7 +527,7 @@ static void pskcore_rx_feed(nuepsk_rx_t *rx, const int16_t *samples, size_t coun
         }
     }
 
-    const int second_decim = rx->config.mode == NUEPSK_MODE_PSK63 ? 8 : 16;
+    const int second_decim = rx->config.mode == PSK_RTTY_MODE_PSK63 ? 8 : 16;
     float rot_inc = rx->nco_phase_inc + rx->freq_error;
     float rot_cos = cosf(rot_inc);
     float rot_sin = sinf(rot_inc);
@@ -553,7 +553,7 @@ static void pskcore_rx_feed(nuepsk_rx_t *rx, const int16_t *samples, size_t coun
                                                          PSKCORE_DEC4_LPFIR_LENGTH, s_dec4_lpfir);
 
             if ((rx->sample_count % second_decim) == 0) {
-                nuepsk_complex_t filtered = fir_complex(rx->dec2_queue, rx->dec2_state,
+                psk_rtty_complex_t filtered = fir_complex(rx->dec2_queue, rx->dec2_state,
                                                         PSKCORE_DEC4_LPFIR_LENGTH, s_dec4_lpfir);
                 calc_bit_filter(rx, filtered);
                 calc_agc(rx);
@@ -578,9 +578,9 @@ static void pskcore_rx_feed(nuepsk_rx_t *rx, const int16_t *samples, size_t coun
     rx->sample_count %= 16;
 }
 
-void nuepsk_rx_feed(nuepsk_rx_t *rx, const int16_t *samples, size_t count)
+void psk_rtty_rx_feed(psk_rtty_rx_t *rx, const int16_t *samples, size_t count)
 {
-    if (rx->config.mode == NUEPSK_MODE_BPSK31 || rx->config.mode == NUEPSK_MODE_PSK63) {
+    if (rx->config.mode == PSK_RTTY_MODE_BPSK31 || rx->config.mode == PSK_RTTY_MODE_PSK63) {
         pskcore_rx_feed(rx, samples, count);
         return;
     }

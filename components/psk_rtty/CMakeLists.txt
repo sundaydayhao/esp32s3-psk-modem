@@ -1,4 +1,4 @@
 idf_component_register(
-    SRCS "nuepsk.c"
+    SRCS "psk_rtty.c"
     INCLUDE_DIRS "include"
 )

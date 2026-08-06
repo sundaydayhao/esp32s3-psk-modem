@@ -34,6 +34,13 @@ ui_event_t ui_poll(const display_state_t *display_state)
         return event;
     }
 
+    transport_mode_t transport_mode;
+    if (display_take_transport_selection(&transport_mode)) {
+        event.type = UI_EVENT_TRANSPORT_CHANGED;
+        event.transport_mode = transport_mode;
+        return event;
+    }
+
     int tone_hz;
     if (display_take_tone_selection(&tone_hz)) {
         event.type = UI_EVENT_TONE_CHANGED;
