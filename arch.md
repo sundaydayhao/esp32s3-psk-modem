@@ -17,15 +17,15 @@
 
 ```mermaid
 flowchart LR
-    MIC[ES7210 / I2S 音频输入] --> AIN[audio_input.c<br/>采样与抽取]
-    AIN --> MODEM[modem.c<br/>统一 modem API]
-    MODEM --> DL[decoder_layer.c<br/>统一解码层]
-    DL --> OUTBUF[解码字节流]
-    OUTBUF --> TRANSPORT[transport.c<br/>USB / WiFi / BT 三选一]
-    OUTBUF --> SCREEN[display.c<br/>解码文本显示]
-    AIN --> SPEC[spectrum.c<br/>频谱分析]
-    SPEC --> WATERFALL[display.c<br/>频谱 / 瀑布图]
-    UI[ui.c<br/>按键和触摸设置] --> CTRL[控制队列]
+    MIC["ES7210 / I2S 音频输入"] --> AIN["audio_input.c<br/>采样与抽取"]
+    AIN --> MODEM["modem.c<br/>统一 modem API"]
+    MODEM --> DL["decoder_layer.c<br/>统一解码层"]
+    DL --> OUTBUF["解码字节流"]
+    OUTBUF --> TRANSPORT["transport.c<br/>USB / WiFi / BT 三选一"]
+    OUTBUF --> SCREEN["display.c<br/>解码文本显示"]
+    AIN --> SPEC["spectrum.c<br/>频谱分析"]
+    SPEC --> WATERFALL["display.c<br/>频谱 / 瀑布图"]
+    UI["ui.c<br/>按键和触摸设置"] --> CTRL["控制队列"]
     CTRL --> MODEM
     CTRL --> TRANSPORT
     UI --> WATERFALL
@@ -51,36 +51,36 @@ ES7210/I2S audio
 ```mermaid
 flowchart TB
     subgraph UI_LAYER[界面层]
-        UI1[按键进入 / 退出设置]
-        UI2[触摸选择调制模式]
-        UI3[触摸选择 USB / WiFi / BT]
-        UI4[触摸瀑布图改变中心频点]
+        UI1["按键进入 / 退出设置"]
+        UI2["触摸选择调制模式"]
+        UI3["触摸选择 USB / WiFi / BT"]
+        UI4["触摸瀑布图改变中心频点"]
     end
 
     subgraph APP_LAYER[任务与应用层]
-        APP1[app_main.c<br/>audio_task]
-        APP2[控制队列]
-        APP3[显示队列]
+        APP1["app_main.c<br/>audio_task"]
+        APP2["控制队列"]
+        APP3["显示队列"]
     end
 
     subgraph MODEM_LAYER[统一 modem 层]
-        M1[modem.c<br/>公开 API 与输出缓冲]
-        M2[decoder_layer.c<br/>按 family 分发]
-        M3[demod_primitives.c<br/>profile 与 DSP 基础函数]
+        M1["modem.c<br/>公开 API 与输出缓冲"]
+        M2["decoder_layer.c<br/>按 family 分发"]
+        M3["demod_primitives.c<br/>profile 与 DSP 基础函数"]
     end
 
     subgraph BACKENDS[协议后端和小组件]
-        B1[psk_rtty<br/>BPSK31 / PSK63 / RTTY]
-        B2[ft8lib<br/>FT8 / FT4]
-        B3[CW tone/timing<br/>Morse 解码]
-        B4[MFSK16 chain<br/>tone bank / deinterleave / Viterbi / varicode]
+        B1["psk_rtty<br/>BPSK31 / PSK63 / RTTY"]
+        B2["ft8lib<br/>FT8 / FT4"]
+        B3["CW tone/timing<br/>Morse 解码"]
+        B4["MFSK16 chain<br/>tone bank / deinterleave / Viterbi / varicode"]
     end
 
     subgraph OUTPUT_LAYER[输出层]
-        O1[transport.c]
-        O2[USB serial]
-        O3[WiFi]
-        O4[BT]
+        O1["transport.c"]
+        O2["USB serial"]
+        O3["WiFi"]
+        O4["BT"]
     end
 
     UI_LAYER --> APP_LAYER
@@ -122,14 +122,14 @@ flowchart TB
 
 ```mermaid
 flowchart LR
-    PROFILE[demod_profile_t<br/>统一模式参数] --> DECIDE{family}
-    DECIDE -->|PSK| PSK[BPSK31 / PSK63<br/>psk_rtty_rx_feed]
-    DECIDE -->|FSK| FSK[RTTY<br/>psk_rtty_rx_feed]
-    DECIDE -->|FT| FT[FT8 / FT4<br/>ft8lib monitor + LDPC]
-    DECIDE -->|CW| CW[CW<br/>tone energy + Morse tree]
-    DECIDE -->|MFSK| MFSK[MFSK16<br/>tone bank + Viterbi + varicode]
-    PROFILE --> DISPLAY[显示带宽<br/>瀑布图频率范围]
-    PROFILE --> TOUCH[触摸调谐范围]
+    PROFILE["demod_profile_t<br/>统一模式参数"] --> DECIDE{"family"}
+    DECIDE -->|PSK| PSK["BPSK31 / PSK63<br/>psk_rtty_rx_feed"]
+    DECIDE -->|FSK| FSK["RTTY<br/>psk_rtty_rx_feed"]
+    DECIDE -->|FT| FT["FT8 / FT4<br/>ft8lib monitor + LDPC"]
+    DECIDE -->|CW| CW["CW<br/>tone energy + Morse tree"]
+    DECIDE -->|MFSK| MFSK["MFSK16<br/>tone bank + Viterbi + varicode"]
+    PROFILE --> DISPLAY["显示带宽<br/>瀑布图频率范围"]
+    PROFILE --> TOUCH["触摸调谐范围"]
 ```
 
 UI 和瀑布图使用同一张 profile 表，因此新增模式时，解码选择和显示带宽都从同一个数据源变化。
@@ -171,34 +171,34 @@ case DEMOD_FAMILY_MFSK:
 
 ```mermaid
 flowchart TB
-    DL[decoder_layer_feed(samples)] --> FAM{demod family}
+    DL["decoder_layer_feed(samples)"] --> FAM{"demod family"}
 
-    FAM -->|PSK / FSK| PR[psk_rtty 组件]
-    PR --> PR1[BPSK31]
-    PR --> PR2[PSK63]
-    PR --> PR3[RTTY]
-    PR1 --> EMIT[emit decoded bytes]
+    FAM -->|PSK / FSK| PR["psk_rtty 组件"]
+    PR --> PR1["BPSK31"]
+    PR --> PR2["PSK63"]
+    PR --> PR3["RTTY"]
+    PR1 --> EMIT["emit decoded bytes"]
     PR2 --> EMIT
     PR3 --> EMIT
 
-    FAM -->|FT| FTIN[FT8 / FT4 样本窗口]
-    FTIN --> MON[monitor_process]
-    MON --> CAND[ftx_find_candidates]
-    CAND --> LDPC[ftx_decode_candidate<br/>LDPC + CRC]
-    LDPC --> MSG[ftx_message_decode]
+    FAM -->|FT| FTIN["FT8 / FT4 样本窗口"]
+    FTIN --> MON["monitor_process"]
+    MON --> CAND["ftx_find_candidates"]
+    CAND --> LDPC["ftx_decode_candidate<br/>LDPC + CRC"]
+    LDPC --> MSG["ftx_message_decode"]
     MSG --> EMIT
 
-    FAM -->|CW| CWIN[固定音调能量检测]
-    CWIN --> CWSTATE[mark / space 时长]
-    CWSTATE --> MORSE[Morse tree]
+    FAM -->|CW| CWIN["固定音调能量检测"]
+    CWIN --> CWSTATE["mark / space 时长"]
+    CWSTATE --> MORSE["Morse tree"]
     MORSE --> EMIT
 
-    FAM -->|MFSK| MFIN[16 音调能量]
-    MFIN --> GRAY[Gray 反映射]
-    GRAY --> SOFT[4 soft bits]
-    SOFT --> INLV[depth-10 反交织]
-    INLV --> VIT[NASA K=7 Viterbi]
-    VIT --> VARI[MFSK varicode]
+    FAM -->|MFSK| MFIN["16 音调能量"]
+    MFIN --> GRAY["Gray 反映射"]
+    GRAY --> SOFT["4 soft bits"]
+    SOFT --> INLV["depth-10 反交织"]
+    INLV --> VIT["NASA K=7 Viterbi"]
+    VIT --> VARI["MFSK varicode"]
     VARI --> EMIT
 ```
 
@@ -318,16 +318,16 @@ UI 通过控制队列发送模式、频点和传输方式事件。音频任务�
 
 ```mermaid
 flowchart LR
-    BTN[用户按键] --> MENU{设置界面}
-    TOUCH[触摸] --> MENU
-    MENU --> MODESEL[模式选择]
-    MENU --> OUTSEL[输出选择]
-    MENU --> TUNE[瀑布图中心频点]
-    MODESEL --> Q[控制队列]
+    BTN["用户按键"] --> MENU{"设置界面"}
+    TOUCH["触摸"] --> MENU
+    MENU --> MODESEL["模式选择"]
+    MENU --> OUTSEL["输出选择"]
+    MENU --> TUNE["瀑布图中心频点"]
+    MODESEL --> Q["控制队列"]
     OUTSEL --> Q
     TUNE --> Q
-    Q --> MODEM[modem_set_mode / modem_set_rx_tone]
-    Q --> TRANS[transport_set_mode]
+    Q --> MODEM["modem_set_mode / modem_set_rx_tone"]
+    Q --> TRANS["transport_set_mode"]
 ```
 
 ## 传输
@@ -338,10 +338,10 @@ flowchart LR
 
 ```mermaid
 flowchart LR
-    BYTES[decoded bytes] --> SEL{transport mode}
-    SEL -->|USB serial| USB[USB 串口]
-    SEL -->|WiFi| WIFI[WiFi 输出]
-    SEL -->|BT| BT[BT 输出]
+    BYTES["decoded bytes"] --> SEL{"transport mode"}
+    SEL -->|USB serial| USB["USB 串口"]
+    SEL -->|WiFi| WIFI["WiFi 输出"]
+    SEL -->|BT| BT["BT 输出"]
 ```
 
 当前传输行为：
@@ -358,14 +358,14 @@ transport 接收的是原始二进制字节，不能假设它是 NUL 结尾的 C
 
 ```mermaid
 flowchart TB
-    SAMPLES[audio samples] --> SPEC[spectrum_analyze]
-    SPEC --> PEAK[peak_hz / bins]
-    SPEC --> WF[瀑布图绘制]
-    PROFILE[demod_profile_t.bandwidth_hz] --> WF
-    TOUCH[触摸 x 坐标] --> MAP[映射到当前模式带宽]
+    SAMPLES["audio samples"] --> SPEC["spectrum_analyze"]
+    SPEC --> PEAK["peak_hz / bins"]
+    SPEC --> WF["瀑布图绘制"]
+    PROFILE["demod_profile_t.bandwidth_hz"] --> WF
+    TOUCH["触摸 x 坐标"] --> MAP["映射到当前模式带宽"]
     PROFILE --> MAP
-    MAP --> TONE[rx_tone_hz]
-    TONE --> MODEM[modem_set_rx_tone]
+    MAP --> TONE["rx_tone_hz"]
+    TONE --> MODEM["modem_set_rx_tone"]
 ```
 
 触摸交互会把屏幕位置映射为当前模式带宽内的新中心音调，然后通过 `modem_set_rx_tone()` 应用到 modem。
