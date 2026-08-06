@@ -1,24 +1,21 @@
-# ESP32-S3 Multi-Mode Modem Architecture
+# ESP32-S3 多模式调制解调器架构
 
-## Goals
+## 目标
 
-This project implements a touch-controlled ESP32-S3 digital modem for BPSK31,
-PSK63, FT8, FT4, RTTY, CW, and low-speed MFSK16. The decoder is organized as a
-single modem layer that composes small DSP and protocol blocks instead of
-creating one unrelated decoder stack per mode.
+本项目实现一个基于 ESP32-S3 的触摸控制数字调制解调器，支持 BPSK31、
+PSK63、FT8、FT4、RTTY、CW 和低速 MFSK16。解码器组织成统一的 modem
+层，通过小型 DSP 与协议组件拼接出不同调制方式，而不是为每个模式建立一套互不相关的解码栈。
 
-The design keeps these rules:
+设计遵循以下规则：
 
-- All receive audio enters through one modem API.
-- Mode-specific behavior is selected by profiles and small protocol backends.
-- The old `nuepsk` component name is removed; PSK and RTTY live under
-  `psk_rtty`.
-- FT8 and FT4 use a lightweight MCU-ready C backend.
-- Output transport is selected as exactly one of USB serial, WiFi, or BT.
-- The display uses the selected mode profile to choose waterfall bandwidth and
-  touch-to-center-frequency behavior.
+- 所有接收音频都从同一个 modem API 进入。
+- 模式差异由 profile 和小型协议后端选择。
+- 移除旧的 `nuepsk` 组件名；PSK 和 RTTY 归入 `psk_rtty`。
+- FT8 和 FT4 使用适合 MCU 的轻量 C 后端。
+- 输出传输方式在 USB 串口、WiFi、BT 中三选一，不能同时启用。
+- 屏幕显示根据当前模式 profile 选择瀑布图带宽，并把触摸位置映射为中心频点。
 
-## Top-Level Flow
+## 顶层流程
 
 ```text
 ES7210/I2S audio
@@ -31,46 +28,44 @@ ES7210/I2S audio
     -> screen decoded text and waterfall
 ```
 
-`main/modem.c` is intentionally thin. It owns the public modem state and output
-buffer, then delegates all receive work to `main/decoder_layer.c`.
+`main/modem.c` 故意保持很薄。它只维护公开 modem 状态和输出缓冲区，然后把所有接收处理交给
+`main/decoder_layer.c`。
 
-## Mode Profiles
+## 模式 Profile
 
-Mode metadata is centralized in `main/demod_primitives.c`.
+模式元数据集中在 `main/demod_primitives.c`。
 
-Each `demod_profile_t` describes:
+每个 `demod_profile_t` 描述：
 
-- modem mode
-- demodulation family
-- symbol rate
-- tone count
-- tone spacing
-- recommended display bandwidth
+- modem 模式
+- 解调家族
+- 符号率
+- 音调数量
+- 音调间隔
+- 推荐显示带宽
 
-The current families are:
+当前解调家族包括：
 
-- `DEMOD_FAMILY_PSK`: BPSK31 and PSK63
-- `DEMOD_FAMILY_FSK`: RTTY
-- `DEMOD_FAMILY_FT`: FT8 and FT4
-- `DEMOD_FAMILY_CW`: CW
-- `DEMOD_FAMILY_MFSK`: MFSK16
+- `DEMOD_FAMILY_PSK`：BPSK31 和 PSK63
+- `DEMOD_FAMILY_FSK`：RTTY
+- `DEMOD_FAMILY_FT`：FT8 和 FT4
+- `DEMOD_FAMILY_CW`：CW
+- `DEMOD_FAMILY_MFSK`：MFSK16
 
-The UI and waterfall use the same profile table, so adding a mode changes both
-decoder selection and display bandwidth through one data source.
+UI 和瀑布图使用同一张 profile 表，因此新增模式时，解码选择和显示带宽都从同一个数据源变化。
 
-## Unified Decode Layer
+## 统一解码层
 
-`main/decoder_layer.c` is the common receive dispatcher. It owns shared state
-for:
+`main/decoder_layer.c` 是公共接收分发器。它持有以下共享状态：
 
-- symbol buffering
-- selected demod profile
-- PSK/RTTY backend instance
-- FT monitor instance
-- CW timing state
-- MFSK16 interleaver and Viterbi state
+- 符号缓冲区
+- 当前选择的 demod profile
+- PSK/RTTY 后端实例
+- FT monitor 实例
+- CW 定时状态
+- MFSK16 交织器和 Viterbi 状态
 
-The main dispatch is:
+主分发逻辑如下：
 
 ```c
 switch (profile->family) {
@@ -90,44 +85,38 @@ case DEMOD_FAMILY_MFSK:
 }
 ```
 
-This keeps one public decoder layer while allowing each modulation family to
-compose only the primitives it needs.
+这样可以保持一个公开解码层，同时允许每个调制家族只组合自己需要的最小组件。
 
-## DSP Primitives
+## DSP 基础组件
 
-`main/demod_primitives.c` provides small reusable DSP helpers:
+`main/demod_primitives.c` 提供小型可复用 DSP 辅助函数：
 
-- mode profile lookup
-- tone clamping
-- tone power measurement
-- Goertzel-style tone power wrapper
+- 模式 profile 查询
+- 接收音调范围限制
+- 音调功率测量
+- Goertzel 风格的音调功率包装函数
 
-Higher-level decoders should use these helpers where possible instead of
-duplicating frequency and tone-energy logic.
+更高层的解码器应尽量使用这些函数，避免重复实现频率和音调能量逻辑。
 
-## BPSK31, PSK63, and RTTY
+## BPSK31、PSK63 和 RTTY
 
-The renamed `components/psk_rtty` component handles:
+重命名后的 `components/psk_rtty` 组件负责：
 
 - BPSK31
 - PSK63
 - RTTY
 
-The component contains the existing PSK/RTTY demodulation and decoding logic,
-but all external symbols now use the `psk_rtty` namespace. The unified decoder
-layer maps public `modem_mode_t` values into `psk_rtty_mode_t` and receives
-decoded characters through a callback.
+该组件保留已有的 PSK/RTTY 解调和解码逻辑，但所有外部符号都使用 `psk_rtty`
+命名空间。统一解码层把公开的 `modem_mode_t` 映射为 `psk_rtty_mode_t`，并通过回调接收解码字符。
 
-This component should stay focused on PSK and 2-tone FSK modes. Shared
-selection, output buffering, display behavior, and transport are outside this
-component.
+该组件应只关注 PSK 和双音 FSK 模式。共享的模式选择、输出缓冲、显示行为和传输逻辑都放在组件外部。
 
-## FT8 and FT4
+## FT8 和 FT4
 
-FT8 and FT4 use the vendored `components/ft8lib` backend based on the portable
-`kgoba/ft8_lib` C implementation.
+FT8 和 FT4 使用 vendored 的 `components/ft8lib` 后端，该后端基于可移植的
+`kgoba/ft8_lib` C 实现。
 
-The receive path is:
+接收路径如下：
 
 ```text
 audio samples
@@ -140,21 +129,18 @@ audio samples
     -> decoded text line
 ```
 
-The decoder layer creates `monitor_t` lazily when FT8 or FT4 is selected. The
-monitor protocol is selected from the active modem mode:
+当选择 FT8 或 FT4 时，解码层会延迟创建 `monitor_t`。monitor 协议由当前 modem 模式决定：
 
 - `MODEM_MODE_FT8` -> `FTX_PROTOCOL_FT8`
 - `MODEM_MODE_FT4` -> `FTX_PROTOCOL_FT4`
 
-Callsign hash lookup/save is provided by a small in-memory hash table in the
-decoder layer.
+呼号 hash 查询和保存由解码层中的小型内存 hash 表提供。
 
 ## CW
 
-CW is implemented in the unified layer as a lightweight tone-energy and timing
-decoder.
+CW 在统一层中实现为轻量的音调能量和时序解码器。
 
-The receive path is:
+接收路径如下：
 
 ```text
 audio samples
@@ -166,15 +152,14 @@ audio samples
     -> ASCII characters
 ```
 
-The unit estimate starts at 20 WPM and adapts between bounded 8 WPM and 45 WPM
-limits. This keeps the decoder usable for manual CW without adding a large
-desktop-style state machine.
+dit 单元估计从 20 WPM 起步，并在 8 WPM 到 45 WPM 的范围内自适应。这样可以支持手动 CW，
+同时避免引入大型桌面端状态机。
 
 ## MFSK16
 
-MFSK16 is implemented as a composed protocol chain inside the unified layer.
+MFSK16 在统一层内部实现为组合式协议链。
 
-The receive path is:
+接收路径如下：
 
 ```text
 one MFSK symbol of audio
@@ -187,95 +172,84 @@ one MFSK symbol of audio
     -> ASCII characters
 ```
 
-This replaces the earlier raw-tone/nibble output path. MFSK16 now emits decoded
-characters instead of raw tone indexes.
+这替代了早期的原始音调/nibble 输出路径。MFSK16 现在输出解码字符，而不是原始音调索引。
 
-The implementation intentionally keeps the pieces small:
+实现有意拆成小块：
 
-- tone bank measurement
-- soft-bit generation
-- deinterleaver
+- 音调组测量
+- soft-bit 生成
+- 反交织
 - Viterbi traceback
-- varicode decode
+- varicode 解码
 
-These can be improved independently without changing the modem API.
+这些小块可以独立改进，而不需要改变 modem API。
 
-## UI and Settings
+## UI 和设置
 
-The user button toggles the settings screen:
+用户按键用于切换设置界面：
 
-- press once: enter settings
-- press again: leave settings
+- 按一次：进入设置
+- 再按一次：退出设置
 
-The settings UI supports:
+设置 UI 支持：
 
-- modulation mode selection by touch
-- output transport selection by touch
+- 通过触摸选择调制模式
+- 通过触摸选择输出传输方式
 
-Only one output transport is active at a time:
+同一时间只能启用一种输出传输方式：
 
-- USB serial
+- USB 串口
 - WiFi
 - BT
 
-The UI sends mode, tone, and transport events through the control queue. The
-audio task applies these events to the modem and transport layers.
+UI 通过控制队列发送模式、频点和传输方式事件。音频任务接收这些事件，并应用到 modem 和 transport 层。
 
-## Transport
+## 传输
 
-`main/transport.c` owns decoded byte delivery.
+`main/transport.c` 负责 decoded byte delivery。
 
-The transport mode is exclusive. Switching mode disables the old path and uses
-the newly selected path for subsequent decoded bytes.
+传输模式是互斥的。切换模式时，旧路径停止使用，后续解码字节只通过新选择的路径发送。
 
-Current transport behavior:
+当前传输行为：
 
-- USB serial writes decoded bytes to the USB serial output path.
-- WiFi sends decoded bytes over the configured WiFi path.
-- BT is represented as a selectable mode and should be completed with the
-  target BLE/SPP implementation required by the product.
+- USB 串口把解码后的字节写到 USB serial 输出路径。
+- WiFi 通过已配置的 WiFi 路径发送解码字节。
+- BT 目前作为可选择模式存在，后续需要按产品要求补齐 BLE/SPP 实现。
 
-Transport receives decoded bytes as raw binary data and must not assume
-NUL-terminated strings.
+transport 接收的是原始二进制字节，不能假设它是 NUL 结尾的 C 字符串。
 
-## Spectrum and Waterfall
+## 频谱和瀑布图
 
-The spectrum analyzer and display run beside the decoder. Display bandwidth is
-derived from the active `demod_profile_t`.
+频谱分析器和显示逻辑与解码器并行运行。显示带宽来自当前激活的 `demod_profile_t`。
 
-Touch interaction maps screen position to a new center tone inside the selected
-mode bandwidth. The selected tone is then applied to the modem through
-`modem_set_rx_tone()`.
+触摸交互会把屏幕位置映射为当前模式带宽内的新中心音调，然后通过 `modem_set_rx_tone()` 应用到 modem。
 
-This means every mode has one source of truth for:
+这意味着每个模式都有同一个事实来源来描述：
 
-- decoder parameters
-- waterfall display width
-- valid touch tuning range
+- 解码参数
+- 瀑布图显示宽度
+- 有效触摸调谐范围
 
-## Extension Rules
+## 扩展规则
 
-When adding or improving a mode:
+新增或改进模式时：
 
-1. Add or update its `demod_profile_t`.
-2. Reuse existing DSP primitives where possible.
-3. Add only the smallest backend state needed by the modulation family.
-4. Keep public mode switching in `modem.c` and dispatch in `decoder_layer.c`.
-5. Emit decoded bytes through the unified callback.
-6. Do not add another top-level decoder API for a single mode.
+1. 新增或更新对应的 `demod_profile_t`。
+2. 尽量复用已有 DSP 基础组件。
+3. 只增加该调制家族真正需要的最小后端状态。
+4. 保持公开模式切换在 `modem.c`，统一分发在 `decoder_layer.c`。
+5. 通过统一 callback 输出解码字节。
+6. 不要为单个模式再新增顶层 decoder API。
 
-When adding a transport:
+新增传输方式时：
 
-1. Keep it behind `transport_send()`.
-2. Preserve exclusive mode selection.
-3. Treat output as binary bytes, not C strings.
+1. 放在 `transport_send()` 后面。
+2. 保持传输模式互斥。
+3. 把输出视为二进制字节，不要当作 C 字符串处理。
 
-## Licensing Notes
+## 许可说明
 
-`components/ft8lib` is vendored from an MCU-oriented FT8/FT4 C implementation.
-The PSK/RTTY code is retained in project form under the renamed `psk_rtty`
-component.
+`components/ft8lib` 来自面向 MCU 的 FT8/FT4 C 实现。PSK/RTTY 代码以项目内组件形式保留，
+并重命名为 `psk_rtty`。
 
-Fldigi and uSDX are useful algorithm references, but the project should avoid
-bulk-copying desktop GPL implementation files unless the whole repository is
-intentionally managed under compatible license obligations.
+Fldigi 和 uSDX 是有价值的算法参考，但除非整个仓库明确接受兼容的许可证义务，否则应避免批量复制桌面端 GPL 实现文件。
