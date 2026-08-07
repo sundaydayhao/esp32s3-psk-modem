@@ -33,6 +33,7 @@ typedef struct {
 static QueueHandle_t s_decoded_queue;
 static QueueHandle_t s_control_queue;
 static QueueHandle_t s_spectrum_queue;
+static modem_t s_audio_modem;
 
 static int32_t calc_block_rms(const int16_t *samples, size_t count)
 {
@@ -67,14 +68,14 @@ static void apply_control_event(modem_t *modem, const ui_event_t *event)
 
 static void audio_task(void *arg)
 {
-    modem_t modem;
     const modem_config_t modem_config = {
         .mode = MODEM_MODE_PSK63,
         .sample_rate_hz = BOARD_MODEM_SAMPLE_RATE_HZ,
         .rx_tone_hz = 1000,
         .squelch = 30,
     };
-    modem_init(&modem, &modem_config);
+    modem_t *modem = &s_audio_modem;
+    modem_init(modem, &modem_config);
 
     int16_t samples[256];
     char decoded[sizeof(((decoded_msg_t *)0)->text)];
@@ -92,7 +93,7 @@ static void audio_task(void *arg)
     while (true) {
         ui_event_t event;
         while (xQueueReceive(s_control_queue, &event, 0) == pdTRUE) {
-            apply_control_event(&modem, &event);
+            apply_control_event(modem, &event);
         }
 
         const size_t count = audio_input_read(samples, 256, 50);
@@ -115,12 +116,12 @@ static void audio_task(void *arg)
             } else if (active_hold_blocks > 0) {
                 active_hold_blocks--;
             } else if (decoder_active) {
-                modem_set_mode(&modem, modem_get_mode(&modem));
+                modem_set_mode(modem, modem_get_mode(modem));
                 decoder_active = false;
             }
 
             if (last_active || active_hold_blocks > 0) {
-                const size_t decoded_len = modem_process(&modem, samples, count, decoded, sizeof(decoded));
+                const size_t decoded_len = modem_process(modem, samples, count, decoded, sizeof(decoded));
                 if (decoded_len > 0) {
                     transport_send((const uint8_t *)decoded, decoded_len);
 
@@ -140,7 +141,7 @@ static void audio_task(void *arg)
 #if BOARD_MODEM_DEBUG_LOGS
         if (now_us - last_status_log_us >= 5000000) {
             last_status_log_us = now_us;
-            const psk_rtty_rx_t *rx = &modem.decoder.psk_rtty_rx;
+            const psk_rtty_rx_t *rx = &modem->decoder.psk_rtty_rx;
             spectrum_t debug_spectrum;
             spectrum_analyze(samples, count, BOARD_MODEM_SAMPLE_RATE_HZ, &debug_spectrum);
             last_peak_hz = debug_spectrum.peak_hz;
@@ -148,7 +149,7 @@ static void audio_task(void *arg)
                                            (float)rx->config.sample_rate_hz / TWO_PI_F);
             ESP_LOGI(TAG,
                      "mode=%s rx=%d Hz nco=%d Hz peak=%d Hz rms=%d active=%d reads=%u samples=%u sq=%d lvl=%d agc=%d dev=%d pk=%d/%d/%d warm=%d sym=%u bits=%u z=%u o=%u dd=%u ch=%u unk=%u",
-                     modem_mode_name(modem_get_mode(&modem)), modem_get_rx_tone(&modem),
+                     modem_mode_name(modem_get_mode(modem)), modem_get_rx_tone(modem),
                      nco_hz, last_peak_hz, (int)last_rms, last_active,
                      (unsigned)reads_this_second, (unsigned)samples_this_second,
                      rx->sq_open, rx->sq_level, (int)rx->agc_ave, (int)rx->dev_ave,
@@ -247,8 +248,10 @@ void app_main(void)
     s_spectrum_queue = xQueueCreate(1, sizeof(spectrum_msg_t));
     ESP_ERROR_CHECK(s_decoded_queue && s_control_queue && s_spectrum_queue ? ESP_OK : ESP_ERR_NO_MEM);
 
-    xTaskCreate(audio_task, "psk_audio", 8192, NULL, 8, NULL);
-    xTaskCreate(ui_task, "psk_ui", 6144, NULL, 2, NULL);
+    BaseType_t task_ok = xTaskCreate(audio_task, "psk_audio", 8192, NULL, 8, NULL);
+    ESP_ERROR_CHECK(task_ok == pdPASS ? ESP_OK : ESP_ERR_NO_MEM);
+    task_ok = xTaskCreate(ui_task, "psk_ui", 6144, NULL, 2, NULL);
+    ESP_ERROR_CHECK(task_ok == pdPASS ? ESP_OK : ESP_ERR_NO_MEM);
 
     ESP_LOGI(TAG, "ESP32-S3 PSK modem started");
 

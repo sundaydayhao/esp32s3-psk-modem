@@ -20,11 +20,11 @@ static esp_err_t codec_i2c_init(void)
 {
     i2c_master_bus_handle_t i2c_bus = NULL;
     ESP_RETURN_ON_ERROR(board_i2c_get_bus(&i2c_bus), TAG, "i2c bus");
-    (void)i2c_bus;
 
     const es7210_i2c_config_t i2c_conf = {
-        .i2c_port = BOARD_AUDIO_I2C_PORT,
+        .i2c_bus = i2c_bus,
         .i2c_addr = BOARD_ES7210_I2C_ADDR,
+        .scl_speed_hz = BOARD_I2C_SPEED_HZ,
     };
     ESP_RETURN_ON_ERROR(es7210_new_codec(&i2c_conf, &s_codec), TAG, "es7210 create");
 
