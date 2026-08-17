@@ -5,6 +5,8 @@
 
 #ifdef ESP_PLATFORM
 #include "esp_attr.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
 #endif
 
 #include "PSKTables.h"
@@ -58,6 +60,21 @@
 #define PSK_FAST_TEXT
 #define PSK_FAST_BSS
 #define PSK_SDRAM_BSS
+#endif
+
+#if defined(ESP_PLATFORM)
+static inline void psk_runtime_yield(uint16_t nstates, uint16_t state_base)
+{
+    if (nstates >= 32768U && state_base != 0U && (state_base & 0x1fffU) == 0U) {
+        vTaskDelay(pdMS_TO_TICKS(1));
+    }
+}
+#else
+static inline void psk_runtime_yield(uint16_t nstates, uint16_t state_base)
+{
+    (void)nstates;
+    (void)state_base;
+}
 #endif
 
 typedef struct {
@@ -881,6 +898,7 @@ static PSK_FAST_TEXT int fec_decode_pair(psk_rtty_rx_t *rx, fec_branch_state_t *
             }
         }
         decision_row[state_base >> 3U] = decision_byte;
+        psk_runtime_yield(nstates, state_base);
     }
 
     if (max_metric > 12000) {

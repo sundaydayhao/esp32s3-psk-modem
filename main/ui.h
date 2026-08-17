@@ -9,8 +9,7 @@ typedef enum {
     UI_EVENT_MODE_CHANGED,
     UI_EVENT_PSK_MODE_CHANGED,
     UI_EVENT_TRANSPORT_CHANGED,
-    UI_EVENT_TONE_CHANGED,
-    UI_EVENT_MENU_TOGGLED
+    UI_EVENT_TONE_CHANGED
 } ui_event_type_t;
 
 typedef struct {

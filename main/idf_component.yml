@@ -1,3 +1,2 @@
 dependencies:
-  espressif/es7210: "^1.0.0"
   lvgl/lvgl: "~8.3.0"

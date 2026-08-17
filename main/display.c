@@ -23,18 +23,9 @@ static const char *TAG = "display";
 
 static lv_obj_t *s_spectrum;
 static lv_obj_t *s_tone_marker;
+static lv_obj_t *s_text_view;
 static lv_obj_t *s_text;
 static lv_obj_t *s_status;
-static lv_obj_t *s_menu;
-static lv_obj_t *s_psk_dropdown;
-static modem_mode_t s_pending_mode;
-static int s_has_pending_mode;
-static psk_mode_t s_pending_psk_mode;
-static int s_has_pending_psk_mode;
-static psk_mode_t s_psk_dropdown_modes[PSK_MODE_COUNT];
-static uint16_t s_psk_dropdown_count;
-static transport_mode_t s_pending_transport;
-static int s_has_pending_transport;
 static int s_pending_tone_hz;
 static int s_has_pending_tone;
 static esp_lcd_touch_handle_t s_touch;
@@ -119,29 +110,6 @@ static void increase_lvgl_tick(void *arg)
 {
     lv_tick_inc(2);
     (void)arg;
-}
-
-static void mode_button_cb(lv_event_t *event)
-{
-    s_pending_mode = (modem_mode_t)(uintptr_t)lv_event_get_user_data(event);
-    s_has_pending_mode = 1;
-}
-
-static void psk_mode_dropdown_cb(lv_event_t *event)
-{
-    lv_obj_t *dropdown = lv_event_get_target(event);
-    const uint16_t selected = lv_dropdown_get_selected(dropdown);
-    if (selected >= s_psk_dropdown_count) {
-        return;
-    }
-    s_pending_psk_mode = s_psk_dropdown_modes[selected];
-    s_has_pending_psk_mode = 1;
-}
-
-static void transport_button_cb(lv_event_t *event)
-{
-    s_pending_transport = (transport_mode_t)(uintptr_t)lv_event_get_user_data(event);
-    s_has_pending_transport = 1;
 }
 
 static void spectrum_touch_cb(lv_event_t *event)
@@ -244,74 +212,21 @@ static void create_ui(lv_disp_t *disp)
     lv_obj_set_style_radius(s_tone_marker, 0, 0);
     lv_obj_clear_flag(s_tone_marker, LV_OBJ_FLAG_CLICKABLE);
 
-    s_text = lv_label_create(screen);
+    s_text_view = lv_obj_create(screen);
+    lv_obj_set_size(s_text_view, BOARD_LCD_WIDTH - 12, BOARD_LCD_HEIGHT / 2 - 8);
+    lv_obj_align(s_text_view, LV_ALIGN_BOTTOM_MID, 0, -4);
+    lv_obj_set_style_bg_opa(s_text_view, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(s_text_view, 0, 0);
+    lv_obj_set_style_pad_all(s_text_view, 0, 0);
+    lv_obj_set_scroll_dir(s_text_view, LV_DIR_VER);
+    lv_obj_set_scrollbar_mode(s_text_view, LV_SCROLLBAR_MODE_ACTIVE);
+
+    s_text = lv_label_create(s_text_view);
     lv_obj_set_width(s_text, BOARD_LCD_WIDTH - 12);
-    lv_obj_set_height(s_text, BOARD_LCD_HEIGHT / 2 - 8);
     lv_label_set_long_mode(s_text, LV_LABEL_LONG_WRAP);
-    lv_obj_align(s_text, LV_ALIGN_BOTTOM_MID, 0, -4);
+    lv_obj_align(s_text, LV_ALIGN_TOP_LEFT, 0, 0);
     lv_label_set_text(s_text, "");
 
-    s_menu = lv_obj_create(screen);
-    lv_obj_set_size(s_menu, BOARD_LCD_WIDTH - 20, BOARD_LCD_HEIGHT - 40);
-    lv_obj_center(s_menu);
-    lv_obj_set_flex_flow(s_menu, LV_FLEX_FLOW_COLUMN);
-    lv_obj_set_scroll_dir(s_menu, LV_DIR_VER);
-    lv_obj_set_style_pad_all(s_menu, 8, 0);
-    lv_obj_add_flag(s_menu, LV_OBJ_FLAG_HIDDEN);
-
-    lv_obj_t *mode_title = lv_label_create(s_menu);
-    lv_label_set_text(mode_title, "Mode");
-
-    for (modem_mode_t mode = 0; mode < MODEM_MODE_COUNT; ++mode) {
-        lv_obj_t *btn = lv_btn_create(s_menu);
-        lv_obj_set_width(btn, LV_PCT(100));
-        lv_obj_set_height(btn, 24);
-        lv_obj_add_event_cb(btn, mode_button_cb, LV_EVENT_CLICKED, (void *)(uintptr_t)mode);
-        lv_obj_t *label = lv_label_create(btn);
-        lv_label_set_text(label, modem_mode_name(mode));
-        lv_obj_center(label);
-    }
-
-    lv_obj_t *psk_title = lv_label_create(s_menu);
-    lv_label_set_text(psk_title, "PSK");
-
-    static char psk_options[512];
-    size_t option_len = 0;
-    s_psk_dropdown_count = 0;
-    for (size_t index = 0; index < psk_mode_count(); ++index) {
-        const psk_mode_info_t *info = psk_mode_info_at(index);
-        if (!info || !info->decode_supported) {
-            continue;
-        }
-        const int written = snprintf(psk_options + option_len, sizeof(psk_options) - option_len,
-                                     "%s%s", option_len > 0 ? "\n" : "", info->name);
-        if (written < 0 || (size_t)written >= sizeof(psk_options) - option_len ||
-            s_psk_dropdown_count >= PSK_MODE_COUNT) {
-            break;
-        }
-        option_len += (size_t)written;
-        s_psk_dropdown_modes[s_psk_dropdown_count++] = info->id;
-    }
-
-    s_psk_dropdown = lv_dropdown_create(s_menu);
-    lv_obj_set_width(s_psk_dropdown, LV_PCT(100));
-    lv_obj_set_height(s_psk_dropdown, 34);
-    lv_dropdown_set_options(s_psk_dropdown, psk_options);
-    lv_dropdown_set_selected(s_psk_dropdown, s_psk_dropdown_count > 1 ? 1 : 0);
-    lv_obj_add_event_cb(s_psk_dropdown, psk_mode_dropdown_cb, LV_EVENT_VALUE_CHANGED, NULL);
-
-    lv_obj_t *transport_title = lv_label_create(s_menu);
-    lv_label_set_text(transport_title, "Output");
-
-    for (transport_mode_t mode = 0; mode < TRANSPORT_MODE_COUNT; ++mode) {
-        lv_obj_t *btn = lv_btn_create(s_menu);
-        lv_obj_set_width(btn, LV_PCT(100));
-        lv_obj_set_height(btn, 24);
-        lv_obj_add_event_cb(btn, transport_button_cb, LV_EVENT_CLICKED, (void *)(uintptr_t)mode);
-        lv_obj_t *label = lv_label_create(btn);
-        lv_label_set_text(label, transport_mode_name(mode));
-        lv_obj_center(label);
-    }
 }
 
 esp_err_t display_init(void)
@@ -481,59 +396,8 @@ void display_render(const display_state_t *state, const spectrum_t *spectrum)
              state->rx_tone_hz, spectrum->peak_hz);
     lv_label_set_text(s_status, status);
     lv_label_set_text(s_text, state->text);
-    if (s_psk_dropdown) {
-        for (uint16_t i = 0; i < s_psk_dropdown_count; ++i) {
-            if (s_psk_dropdown_modes[i] == state->selected_psk_mode) {
-                if (lv_dropdown_get_selected(s_psk_dropdown) != i) {
-                    lv_dropdown_set_selected(s_psk_dropdown, i);
-                }
-                break;
-            }
-        }
-    }
-    display_set_menu_open(state->menu_open);
-}
-
-void display_set_menu_open(int open)
-{
-    if (!s_menu) {
-        return;
-    }
-    if (open) {
-        lv_obj_clear_flag(s_menu, LV_OBJ_FLAG_HIDDEN);
-    } else {
-        lv_obj_add_flag(s_menu, LV_OBJ_FLAG_HIDDEN);
-    }
-}
-
-int display_take_mode_selection(modem_mode_t *mode)
-{
-    if (!s_has_pending_mode) {
-        return 0;
-    }
-    *mode = s_pending_mode;
-    s_has_pending_mode = 0;
-    return 1;
-}
-
-int display_take_psk_mode_selection(psk_mode_t *mode)
-{
-    if (!s_has_pending_psk_mode) {
-        return 0;
-    }
-    *mode = s_pending_psk_mode;
-    s_has_pending_psk_mode = 0;
-    return 1;
-}
-
-int display_take_transport_selection(transport_mode_t *mode)
-{
-    if (!s_has_pending_transport) {
-        return 0;
-    }
-    *mode = s_pending_transport;
-    s_has_pending_transport = 0;
-    return 1;
+    lv_obj_update_layout(s_text_view);
+    lv_obj_scroll_to_y(s_text_view, LV_COORD_MAX, LV_ANIM_OFF);
 }
 
 int display_take_tone_selection(int *tone_hz)

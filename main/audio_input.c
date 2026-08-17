@@ -7,45 +7,100 @@
 #include "audio_decim.h"
 #include "board_config.h"
 #include "board_i2c.h"
+#include "driver/i2c_master.h"
 #include "driver/i2s_std.h"
 #include "driver/i2s_tdm.h"
 #include "esp_check.h"
 #include "esp_log.h"
 #include "esp_timer.h"
-#include "es7210.h"
 
 static const char *TAG = "audio";
 static i2s_chan_handle_t s_rx_handle;
-static es7210_dev_handle_t s_codec;
+static i2c_master_bus_handle_t s_i2c_bus;
+static i2c_master_dev_handle_t s_es7210_dev;
 static audio_decim_state_t s_decim_state;
 static int16_t s_raw_samples[1024];
 static int16_t s_mono_samples[512];
 
+#define ES7210_RESET_REG00            0x00
+#define ES7210_MAINCLK_REG02          0x02
+#define ES7210_LRCK_DIVH_REG04        0x04
+#define ES7210_LRCK_DIVL_REG05        0x05
+#define ES7210_POWER_DOWN_REG06       0x06
+#define ES7210_OSR_REG07              0x07
+#define ES7210_TIME_CONTROL0_REG09    0x09
+#define ES7210_TIME_CONTROL1_REG0A    0x0A
+#define ES7210_SDP_INTERFACE1_REG11   0x11
+#define ES7210_SDP_INTERFACE2_REG12   0x12
+#define ES7210_ADC12_HPF1_REG23       0x23
+#define ES7210_ADC12_HPF2_REG22       0x22
+#define ES7210_ADC34_HPF1_REG21       0x21
+#define ES7210_ADC34_HPF2_REG20       0x20
+#define ES7210_ANALOG_REG40           0x40
+#define ES7210_MIC12_BIAS_REG41       0x41
+#define ES7210_MIC34_BIAS_REG42       0x42
+#define ES7210_MIC1_GAIN_REG43        0x43
+#define ES7210_MIC2_GAIN_REG44        0x44
+#define ES7210_MIC3_GAIN_REG45        0x45
+#define ES7210_MIC4_GAIN_REG46        0x46
+#define ES7210_MIC1_POWER_REG47       0x47
+#define ES7210_MIC2_POWER_REG48       0x48
+#define ES7210_MIC3_POWER_REG49       0x49
+#define ES7210_MIC4_POWER_REG4A       0x4A
+#define ES7210_MIC12_POWER_REG4B      0x4B
+#define ES7210_MIC34_POWER_REG4C      0x4C
+
+static esp_err_t es7210_write_reg(uint8_t reg_addr, uint8_t reg_value)
+{
+    uint8_t write_buf[2] = { reg_addr, reg_value };
+    return i2c_master_transmit(s_es7210_dev, write_buf, sizeof(write_buf), 1000);
+}
+
 static esp_err_t codec_i2c_init(void)
 {
-    i2c_master_bus_handle_t i2c_bus = NULL;
-    ESP_RETURN_ON_ERROR(board_i2c_get_bus(&i2c_bus), TAG, "i2c bus");
+    ESP_RETURN_ON_ERROR(board_i2c_get_bus(&s_i2c_bus), TAG, "i2c bus");
 
-    const es7210_i2c_config_t i2c_conf = {
-        .i2c_bus = i2c_bus,
-        .i2c_addr = BOARD_ES7210_I2C_ADDR,
-        .scl_speed_hz = BOARD_I2C_SPEED_HZ,
-    };
-    ESP_RETURN_ON_ERROR(es7210_new_codec(&i2c_conf, &s_codec), TAG, "es7210 create");
+    if (!s_es7210_dev) {
+        const i2c_device_config_t dev_cfg = {
+            .dev_addr_length = I2C_ADDR_BIT_LEN_7,
+            .device_address = BOARD_ES7210_I2C_ADDR,
+            .scl_speed_hz = BOARD_I2C_SPEED_HZ,
+        };
+        ESP_RETURN_ON_ERROR(i2c_master_bus_add_device(s_i2c_bus, &dev_cfg, &s_es7210_dev), TAG, "es7210 add device");
+    }
 
-    const es7210_codec_config_t codec_conf = {
-        .sample_rate_hz = BOARD_CODEC_SAMPLE_RATE_HZ,
-        .mclk_ratio = BOARD_AUDIO_MCLK_MULTIPLE,
-        .i2s_format = ES7210_I2S_FMT_I2S,
-        .bit_width = ES7210_I2S_BITS_16B,
-        .mic_bias = ES7210_MIC_BIAS_2V87,
-        .mic_gain = ES7210_MIC_GAIN_30DB,
-        .flags = {
-            .tdm_enable = true,
-        },
-    };
-    ESP_RETURN_ON_ERROR(es7210_config_codec(s_codec, &codec_conf), TAG, "es7210 config");
-    ESP_RETURN_ON_ERROR(es7210_config_volume(s_codec, BOARD_ES7210_ADC_VOLUME_DB), TAG, "es7210 volume");
+    ESP_RETURN_ON_ERROR(es7210_write_reg(ES7210_RESET_REG00, 0xFF), TAG, "es7210 reset 1");
+    ESP_RETURN_ON_ERROR(es7210_write_reg(ES7210_RESET_REG00, 0x32), TAG, "es7210 reset 2");
+    ESP_RETURN_ON_ERROR(es7210_write_reg(ES7210_TIME_CONTROL0_REG09, 0x30), TAG, "es7210 time0");
+    ESP_RETURN_ON_ERROR(es7210_write_reg(ES7210_TIME_CONTROL1_REG0A, 0x30), TAG, "es7210 time1");
+    ESP_RETURN_ON_ERROR(es7210_write_reg(ES7210_ADC12_HPF1_REG23, 0x2A), TAG, "es7210 hpf1");
+    ESP_RETURN_ON_ERROR(es7210_write_reg(ES7210_ADC12_HPF2_REG22, 0x0A), TAG, "es7210 hpf2");
+    ESP_RETURN_ON_ERROR(es7210_write_reg(ES7210_ADC34_HPF1_REG21, 0x2A), TAG, "es7210 hpf3");
+    ESP_RETURN_ON_ERROR(es7210_write_reg(ES7210_ADC34_HPF2_REG20, 0x0A), TAG, "es7210 hpf4");
+    ESP_RETURN_ON_ERROR(es7210_write_reg(ES7210_SDP_INTERFACE1_REG11, 0x60), TAG, "es7210 fmt");
+    ESP_RETURN_ON_ERROR(es7210_write_reg(ES7210_SDP_INTERFACE2_REG12, 0x02), TAG, "es7210 tdm");
+    ESP_RETURN_ON_ERROR(es7210_write_reg(ES7210_ANALOG_REG40, 0xC3), TAG, "es7210 analog");
+    ESP_RETURN_ON_ERROR(es7210_write_reg(ES7210_MIC12_BIAS_REG41, 0x70), TAG, "es7210 bias12");
+    ESP_RETURN_ON_ERROR(es7210_write_reg(ES7210_MIC34_BIAS_REG42, 0x70), TAG, "es7210 bias34");
+    ESP_RETURN_ON_ERROR(es7210_write_reg(ES7210_MIC1_GAIN_REG43, 0x1A), TAG, "es7210 gain1");
+    ESP_RETURN_ON_ERROR(es7210_write_reg(ES7210_MIC2_GAIN_REG44, 0x1A), TAG, "es7210 gain2");
+    ESP_RETURN_ON_ERROR(es7210_write_reg(ES7210_MIC3_GAIN_REG45, 0x1A), TAG, "es7210 gain3");
+    ESP_RETURN_ON_ERROR(es7210_write_reg(ES7210_MIC4_GAIN_REG46, 0x1A), TAG, "es7210 gain4");
+    ESP_RETURN_ON_ERROR(es7210_write_reg(ES7210_MIC1_POWER_REG47, 0x08), TAG, "es7210 pwr1");
+    ESP_RETURN_ON_ERROR(es7210_write_reg(ES7210_MIC2_POWER_REG48, 0x08), TAG, "es7210 pwr2");
+    ESP_RETURN_ON_ERROR(es7210_write_reg(ES7210_MIC3_POWER_REG49, 0x08), TAG, "es7210 pwr3");
+    ESP_RETURN_ON_ERROR(es7210_write_reg(ES7210_MIC4_POWER_REG4A, 0x08), TAG, "es7210 pwr4");
+    ESP_RETURN_ON_ERROR(es7210_write_reg(ES7210_OSR_REG07, 0x20), TAG, "es7210 osr");
+    ESP_RETURN_ON_ERROR(es7210_write_reg(ES7210_MAINCLK_REG02, 0xC1), TAG, "es7210 mclk");
+    ESP_RETURN_ON_ERROR(es7210_write_reg(ES7210_LRCK_DIVH_REG04, 0x01), TAG, "es7210 lrckh");
+    ESP_RETURN_ON_ERROR(es7210_write_reg(ES7210_LRCK_DIVL_REG05, 0x00), TAG, "es7210 lrckl");
+    ESP_RETURN_ON_ERROR(es7210_write_reg(ES7210_POWER_DOWN_REG06, 0x04), TAG, "es7210 pdown");
+    ESP_RETURN_ON_ERROR(es7210_write_reg(ES7210_MIC12_POWER_REG4B, 0x0F), TAG, "es7210 power12");
+    ESP_RETURN_ON_ERROR(es7210_write_reg(ES7210_MIC34_POWER_REG4C, 0x0F), TAG, "es7210 power34");
+    ESP_RETURN_ON_ERROR(es7210_write_reg(ES7210_RESET_REG00, 0x71), TAG, "es7210 enable1");
+    ESP_RETURN_ON_ERROR(es7210_write_reg(ES7210_RESET_REG00, 0x41), TAG, "es7210 enable2");
+
+    ESP_LOGI(TAG, "ES7210 initialized on shared I2C bus");
     return ESP_OK;
 }
 

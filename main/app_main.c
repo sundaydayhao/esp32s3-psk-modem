@@ -50,6 +50,25 @@ static int32_t calc_block_rms(const int16_t *samples, size_t count)
     return (int32_t)sqrt((double)sum_sq / (double)count);
 }
 
+static void publish_decoded_text(const char *decoded, size_t decoded_len)
+{
+    if (decoded_len == 0) {
+        return;
+    }
+
+    transport_send((const uint8_t *)decoded, decoded_len);
+
+    decoded_msg_t msg = {0};
+    msg.len = decoded_len;
+    const size_t shown = decoded_len < sizeof(msg.text) - 1 ? decoded_len : sizeof(msg.text) - 1;
+    for (size_t i = 0; i < shown; ++i) {
+        const unsigned char ch = (unsigned char)decoded[i];
+        msg.text[i] = (ch >= 0x20 && ch < 0x7f) || ch == '\r' || ch == '\n' ? (char)ch : '.';
+    }
+    msg.text[shown] = '\0';
+    (void)xQueueSend(s_decoded_queue, &msg, 0);
+}
+
 static void apply_control_event(modem_t *modem, const ui_event_t *event)
 {
     switch (event->type) {
@@ -65,7 +84,6 @@ static void apply_control_event(modem_t *modem, const ui_event_t *event)
     case UI_EVENT_TONE_CHANGED:
         modem_set_rx_tone(modem, event->tone_hz);
         break;
-    case UI_EVENT_MENU_TOGGLED:
     case UI_EVENT_NONE:
     default:
         break;
@@ -78,7 +96,7 @@ static void audio_task(void *arg)
         .mode = MODEM_MODE_PSK63,
         .psk_mode = PSK_MODE_BPSK63,
         .sample_rate_hz = BOARD_MODEM_SAMPLE_RATE_HZ,
-        .rx_tone_hz = 1000,
+        .rx_tone_hz = 1500,
         .squelch = 30,
     };
     modem_t *modem = &s_audio_modem;
@@ -88,7 +106,9 @@ static void audio_task(void *arg)
     uint32_t reads_this_second = 0;
     uint32_t samples_this_second = 0;
     int32_t last_rms = 0;
+#if BOARD_MODEM_DEBUG_LOGS
     int last_peak_hz = 0;
+#endif
     bool last_active = false;
     bool decoder_active = false;
     int active_hold_blocks = 0;
@@ -125,20 +145,16 @@ static void audio_task(void *arg)
             }
 
             if (last_active || active_hold_blocks > 0) {
-                const size_t decoded_len = modem_process(modem, s_audio_samples, count,
-                                                         s_audio_decoded, sizeof(s_audio_decoded));
-                if (decoded_len > 0) {
-                    transport_send((const uint8_t *)s_audio_decoded, decoded_len);
-
-                    decoded_msg_t msg = {0};
-                    msg.len = decoded_len;
-                    const size_t shown = decoded_len < sizeof(msg.text) - 1 ? decoded_len : sizeof(msg.text) - 1;
-                    for (size_t i = 0; i < shown; ++i) {
-                        const unsigned char ch = (unsigned char)s_audio_decoded[i];
-                        msg.text[i] = (ch >= 0x20 && ch < 0x7f) || ch == '\r' || ch == '\n' ? (char)ch : '.';
+                const size_t chunk_samples = 64;
+                for (size_t pos = 0; pos < count; pos += chunk_samples) {
+                    size_t chunk_count = count - pos;
+                    if (chunk_count > chunk_samples) {
+                        chunk_count = chunk_samples;
                     }
-                    msg.text[shown] = '\0';
-                    (void)xQueueSend(s_decoded_queue, &msg, 0);
+                    const size_t decoded_len = modem_process(modem, s_audio_samples + pos, chunk_count,
+                                                             s_audio_decoded, sizeof(s_audio_decoded));
+                    publish_decoded_text(s_audio_decoded, decoded_len);
+                    vTaskDelay(pdMS_TO_TICKS(1));
                 }
             }
         }
@@ -184,7 +200,7 @@ static void ui_task(void *arg)
         .selected_mode = MODEM_MODE_PSK63,
         .selected_psk_mode = PSK_MODE_BPSK63,
         .transport_mode = TRANSPORT_MODE_USB_SERIAL,
-        .rx_tone_hz = 1000,
+        .rx_tone_hz = 1500,
     };
     spectrum_t spectrum = {0};
     int64_t last_render_us = 0;
@@ -199,9 +215,6 @@ static void ui_task(void *arg)
 
         const ui_event_t event = ui_poll(&display_state);
         switch (event.type) {
-        case UI_EVENT_MENU_TOGGLED:
-            display_state.menu_open = !display_state.menu_open;
-            break;
         case UI_EVENT_MODE_CHANGED:
             display_state.selected_mode = event.mode;
             if (event.mode == MODEM_MODE_BPSK31) {
