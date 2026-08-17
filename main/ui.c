@@ -34,6 +34,13 @@ ui_event_t ui_poll(const display_state_t *display_state)
         return event;
     }
 
+    psk_mode_t psk_mode;
+    if (display_take_psk_mode_selection(&psk_mode)) {
+        event.type = UI_EVENT_PSK_MODE_CHANGED;
+        event.psk_mode = psk_mode;
+        return event;
+    }
+
     transport_mode_t transport_mode;
     if (display_take_transport_selection(&transport_mode)) {
         event.type = UI_EVENT_TRANSPORT_CHANGED;

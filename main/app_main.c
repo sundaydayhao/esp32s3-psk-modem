@@ -34,6 +34,9 @@ static QueueHandle_t s_decoded_queue;
 static QueueHandle_t s_control_queue;
 static QueueHandle_t s_spectrum_queue;
 static modem_t s_audio_modem;
+static int16_t s_audio_samples[256];
+static char s_audio_decoded[sizeof(((decoded_msg_t *)0)->text)];
+static spectrum_msg_t s_audio_spectrum_msg;
 
 static int32_t calc_block_rms(const int16_t *samples, size_t count)
 {
@@ -53,6 +56,9 @@ static void apply_control_event(modem_t *modem, const ui_event_t *event)
     case UI_EVENT_MODE_CHANGED:
         modem_set_mode(modem, event->mode);
         break;
+    case UI_EVENT_PSK_MODE_CHANGED:
+        modem_set_psk_mode(modem, event->psk_mode);
+        break;
     case UI_EVENT_TRANSPORT_CHANGED:
         transport_set_mode(event->transport_mode);
         break;
@@ -70,6 +76,7 @@ static void audio_task(void *arg)
 {
     const modem_config_t modem_config = {
         .mode = MODEM_MODE_PSK63,
+        .psk_mode = PSK_MODE_BPSK63,
         .sample_rate_hz = BOARD_MODEM_SAMPLE_RATE_HZ,
         .rx_tone_hz = 1000,
         .squelch = 30,
@@ -77,8 +84,6 @@ static void audio_task(void *arg)
     modem_t *modem = &s_audio_modem;
     modem_init(modem, &modem_config);
 
-    int16_t samples[256];
-    char decoded[sizeof(((decoded_msg_t *)0)->text)];
     int64_t last_status_log_us = 0;
     uint32_t reads_this_second = 0;
     uint32_t samples_this_second = 0;
@@ -96,19 +101,18 @@ static void audio_task(void *arg)
             apply_control_event(modem, &event);
         }
 
-        const size_t count = audio_input_read(samples, 256, 50);
+        const size_t count = audio_input_read(s_audio_samples, 256, 50);
         const int64_t now_us = esp_timer_get_time();
         if (count > 0) {
             reads_this_second++;
             samples_this_second += count;
 
-            spectrum_msg_t spectrum_msg = {
-                .count = count > SPECTRUM_MAX_SAMPLES ? SPECTRUM_MAX_SAMPLES : count,
-            };
-            memcpy(spectrum_msg.samples, samples, spectrum_msg.count * sizeof(spectrum_msg.samples[0]));
-            (void)xQueueOverwrite(s_spectrum_queue, &spectrum_msg);
+            s_audio_spectrum_msg.count = count > SPECTRUM_MAX_SAMPLES ? SPECTRUM_MAX_SAMPLES : count;
+            memcpy(s_audio_spectrum_msg.samples, s_audio_samples,
+                   s_audio_spectrum_msg.count * sizeof(s_audio_spectrum_msg.samples[0]));
+            (void)xQueueOverwrite(s_spectrum_queue, &s_audio_spectrum_msg);
 
-            last_rms = calc_block_rms(samples, count);
+            last_rms = calc_block_rms(s_audio_samples, count);
             last_active = last_rms >= BOARD_AUDIO_ACTIVE_RMS_MIN;
             if (last_active) {
                 active_hold_blocks = 1;
@@ -121,15 +125,16 @@ static void audio_task(void *arg)
             }
 
             if (last_active || active_hold_blocks > 0) {
-                const size_t decoded_len = modem_process(modem, samples, count, decoded, sizeof(decoded));
+                const size_t decoded_len = modem_process(modem, s_audio_samples, count,
+                                                         s_audio_decoded, sizeof(s_audio_decoded));
                 if (decoded_len > 0) {
-                    transport_send((const uint8_t *)decoded, decoded_len);
+                    transport_send((const uint8_t *)s_audio_decoded, decoded_len);
 
                     decoded_msg_t msg = {0};
                     msg.len = decoded_len;
                     const size_t shown = decoded_len < sizeof(msg.text) - 1 ? decoded_len : sizeof(msg.text) - 1;
                     for (size_t i = 0; i < shown; ++i) {
-                        const unsigned char ch = (unsigned char)decoded[i];
+                        const unsigned char ch = (unsigned char)s_audio_decoded[i];
                         msg.text[i] = (ch >= 0x20 && ch < 0x7f) || ch == '\r' || ch == '\n' ? (char)ch : '.';
                     }
                     msg.text[shown] = '\0';
@@ -143,7 +148,7 @@ static void audio_task(void *arg)
             last_status_log_us = now_us;
             const psk_rtty_rx_t *rx = &modem->decoder.psk_rtty_rx;
             spectrum_t debug_spectrum;
-            spectrum_analyze(samples, count, BOARD_MODEM_SAMPLE_RATE_HZ, &debug_spectrum);
+            spectrum_analyze(s_audio_samples, count, BOARD_MODEM_SAMPLE_RATE_HZ, &debug_spectrum);
             last_peak_hz = debug_spectrum.peak_hz;
             const int nco_hz = (int)lrintf((rx->nco_phase_inc + rx->freq_error) *
                                            (float)rx->config.sample_rate_hz / TWO_PI_F);
@@ -177,6 +182,7 @@ static void ui_task(void *arg)
 {
     display_state_t display_state = {
         .selected_mode = MODEM_MODE_PSK63,
+        .selected_psk_mode = PSK_MODE_BPSK63,
         .transport_mode = TRANSPORT_MODE_USB_SERIAL,
         .rx_tone_hz = 1000,
     };
@@ -198,6 +204,11 @@ static void ui_task(void *arg)
             break;
         case UI_EVENT_MODE_CHANGED:
             display_state.selected_mode = event.mode;
+            if (event.mode == MODEM_MODE_BPSK31) {
+                display_state.selected_psk_mode = PSK_MODE_BPSK31;
+            } else if (event.mode == MODEM_MODE_PSK63 && display_state.selected_psk_mode == PSK_MODE_BPSK31) {
+                display_state.selected_psk_mode = PSK_MODE_BPSK63;
+            }
             if (display_state.rx_tone_hz < modem_mode_band_min_hz(event.mode) ||
                 display_state.rx_tone_hz > modem_mode_band_max_hz(event.mode)) {
                 display_state.rx_tone_hz = (modem_mode_band_min_hz(event.mode) +
@@ -208,6 +219,11 @@ static void ui_task(void *arg)
                 };
                 (void)xQueueSend(s_control_queue, &tone_event, 0);
             }
+            (void)xQueueSend(s_control_queue, &event, 0);
+            break;
+        case UI_EVENT_PSK_MODE_CHANGED:
+            display_state.selected_psk_mode = event.psk_mode;
+            display_state.selected_mode = event.psk_mode == PSK_MODE_BPSK31 ? MODEM_MODE_BPSK31 : MODEM_MODE_PSK63;
             (void)xQueueSend(s_control_queue, &event, 0);
             break;
         case UI_EVENT_TRANSPORT_CHANGED:
@@ -248,7 +264,7 @@ void app_main(void)
     s_spectrum_queue = xQueueCreate(1, sizeof(spectrum_msg_t));
     ESP_ERROR_CHECK(s_decoded_queue && s_control_queue && s_spectrum_queue ? ESP_OK : ESP_ERR_NO_MEM);
 
-    BaseType_t task_ok = xTaskCreate(audio_task, "psk_audio", 8192, NULL, 8, NULL);
+    BaseType_t task_ok = xTaskCreate(audio_task, "psk_audio", 16384, NULL, 8, NULL);
     ESP_ERROR_CHECK(task_ok == pdPASS ? ESP_OK : ESP_ERR_NO_MEM);
     task_ok = xTaskCreate(ui_task, "psk_ui", 6144, NULL, 2, NULL);
     ESP_ERROR_CHECK(task_ok == pdPASS ? ESP_OK : ESP_ERR_NO_MEM);

@@ -100,10 +100,10 @@ ES7210/I2S audio
 
 ## 构建
 
-在 ESP-IDF v6.0.2 PowerShell 环境中构建：
+在 ESP-IDF v5.5.5 PowerShell 环境中构建：
 
 ```powershell
-C:\WINDOWS\System32\WindowsPowerShell\v1.0\powershell.exe -NoExit -ExecutionPolicy Bypass -NoProfile -Command "& {. 'C:\Espressif\tools\Microsoft.v6.0.2.PowerShell_profile.ps1'}"
+C:\WINDOWS\System32\WindowsPowerShell\v1.0\powershell.exe -NoExit -ExecutionPolicy Bypass -NoProfile -Command "& {. 'C:\Espressif\tools\Microsoft.v5.5.5.PowerShell_profile.ps1'}"
 idf.py set-target esp32s3
 idf.py build
 ```

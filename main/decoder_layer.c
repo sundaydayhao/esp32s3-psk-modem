@@ -291,17 +291,9 @@ static void mfsk16_deinterleave(decoder_layer_t *d, uint8_t soft[MFSK16_SYMBITS]
     }
 }
 
-static psk_rtty_mode_t to_psk_rtty_mode(modem_mode_t mode)
+static psk_rtty_mode_t to_psk_rtty_mode(psk_mode_t mode)
 {
-    switch (mode) {
-    case MODEM_MODE_PSK63:
-        return PSK_RTTY_MODE_PSK63;
-    case MODEM_MODE_RTTY:
-        return PSK_RTTY_MODE_RTTY;
-    case MODEM_MODE_BPSK31:
-    default:
-        return PSK_RTTY_MODE_BPSK31;
-    }
+    return psk_mode_info(mode)->backend_mode;
 }
 
 static void on_psk_rtty_char(char c, void *userdata)
@@ -360,7 +352,7 @@ static void recreate_backend(decoder_layer_t *d)
     reset_symbol_state(d);
 
     psk_rtty_config_t config = {
-        .mode = to_psk_rtty_mode(d->config.mode),
+        .mode = d->profile->family == DEMOD_FAMILY_FSK ? PSK_RTTY_MODE_RTTY : to_psk_rtty_mode(d->config.psk_mode),
         .sample_rate_hz = d->config.sample_rate_hz,
         .rx_tone_hz = d->config.rx_tone_hz,
         .char_cb = on_psk_rtty_char,
@@ -384,6 +376,21 @@ void decoder_layer_set_mode(decoder_layer_t *d, modem_mode_t mode)
         return;
     }
     d->config.mode = mode;
+    if (mode == MODEM_MODE_BPSK31) {
+        d->config.psk_mode = PSK_MODE_BPSK31;
+    } else if (mode == MODEM_MODE_PSK63) {
+        d->config.psk_mode = PSK_MODE_BPSK63;
+    }
+    recreate_backend(d);
+}
+
+void decoder_layer_set_psk_mode(decoder_layer_t *d, psk_mode_t mode)
+{
+    if ((unsigned)mode >= PSK_MODE_COUNT) {
+        return;
+    }
+    d->config.psk_mode = mode;
+    d->config.mode = mode == PSK_MODE_BPSK31 ? MODEM_MODE_BPSK31 : MODEM_MODE_PSK63;
     recreate_backend(d);
 }
 

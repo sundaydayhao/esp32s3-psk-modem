@@ -31,6 +31,7 @@ static void recreate_decoder(modem_t *m)
 {
     decoder_layer_config_t config = {
         .mode = m->config.mode,
+        .psk_mode = m->config.psk_mode,
         .sample_rate_hz = m->config.sample_rate_hz,
         .rx_tone_hz = m->config.rx_tone_hz,
         .squelch = m->config.squelch,
@@ -44,6 +45,11 @@ void modem_init(modem_t *m, const modem_config_t *config)
 {
     memset(m, 0, sizeof(*m));
     m->config = *config;
+    if (m->config.mode == MODEM_MODE_BPSK31) {
+        m->config.psk_mode = PSK_MODE_BPSK31;
+    } else if (m->config.mode == MODEM_MODE_PSK63 && m->config.psk_mode == PSK_MODE_BPSK31) {
+        m->config.psk_mode = PSK_MODE_BPSK63;
+    }
     recreate_decoder(m);
 }
 
@@ -53,7 +59,22 @@ void modem_set_mode(modem_t *m, modem_mode_t mode)
         return;
     }
     m->config.mode = mode;
+    if (mode == MODEM_MODE_BPSK31) {
+        m->config.psk_mode = PSK_MODE_BPSK31;
+    } else if (mode == MODEM_MODE_PSK63 && m->config.psk_mode == PSK_MODE_BPSK31) {
+        m->config.psk_mode = PSK_MODE_BPSK63;
+    }
     decoder_layer_set_mode(&m->decoder, mode);
+}
+
+void modem_set_psk_mode(modem_t *m, psk_mode_t mode)
+{
+    if ((unsigned)mode >= PSK_MODE_COUNT) {
+        return;
+    }
+    m->config.psk_mode = mode;
+    m->config.mode = mode == PSK_MODE_BPSK31 ? MODEM_MODE_BPSK31 : MODEM_MODE_PSK63;
+    decoder_layer_set_psk_mode(&m->decoder, mode);
 }
 
 void modem_set_rx_tone(modem_t *m, int tone_hz)
@@ -72,9 +93,19 @@ modem_mode_t modem_get_mode(const modem_t *m)
     return m->config.mode;
 }
 
+psk_mode_t modem_get_psk_mode(const modem_t *m)
+{
+    return m->config.psk_mode;
+}
+
 const char *modem_mode_name(modem_mode_t mode)
 {
     return mode < MODEM_MODE_COUNT ? s_mode_names[mode] : "?";
+}
+
+const char *modem_psk_mode_name(psk_mode_t mode)
+{
+    return psk_mode_name(mode);
 }
 
 int modem_mode_band_min_hz(modem_mode_t mode)

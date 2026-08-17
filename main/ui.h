@@ -7,6 +7,7 @@
 typedef enum {
     UI_EVENT_NONE,
     UI_EVENT_MODE_CHANGED,
+    UI_EVENT_PSK_MODE_CHANGED,
     UI_EVENT_TRANSPORT_CHANGED,
     UI_EVENT_TONE_CHANGED,
     UI_EVENT_MENU_TOGGLED
@@ -15,6 +16,7 @@ typedef enum {
 typedef struct {
     ui_event_type_t type;
     modem_mode_t mode;
+    psk_mode_t psk_mode;
     transport_mode_t transport_mode;
     int tone_hz;
 } ui_event_t;

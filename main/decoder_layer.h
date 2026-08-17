@@ -4,6 +4,7 @@
 #include <stdint.h>
 
 #include "demod_primitives.h"
+#include "psk_modes.h"
 #include "psk_rtty.h"
 
 typedef struct decoder_layer decoder_layer_t;
@@ -12,6 +13,7 @@ typedef void (*decoder_layer_emit_cb_t)(const uint8_t *data, size_t len, void *u
 
 typedef struct {
     modem_mode_t mode;
+    psk_mode_t psk_mode;
     int sample_rate_hz;
     int rx_tone_hz;
     int squelch;
@@ -21,6 +23,7 @@ typedef struct {
 
 void decoder_layer_init(decoder_layer_t *d, const decoder_layer_config_t *config);
 void decoder_layer_set_mode(decoder_layer_t *d, modem_mode_t mode);
+void decoder_layer_set_psk_mode(decoder_layer_t *d, psk_mode_t mode);
 void decoder_layer_set_tone(decoder_layer_t *d, int tone_hz);
 void decoder_layer_feed(decoder_layer_t *d, const int16_t *samples, size_t count);
 

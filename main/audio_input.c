@@ -1,8 +1,10 @@
 #include "audio_input.h"
 
 #include <math.h>
+#include <stdbool.h>
 #include <string.h>
 
+#include "audio_decim.h"
 #include "board_config.h"
 #include "board_i2c.h"
 #include "driver/i2s_std.h"
@@ -15,6 +17,9 @@
 static const char *TAG = "audio";
 static i2s_chan_handle_t s_rx_handle;
 static es7210_dev_handle_t s_codec;
+static audio_decim_state_t s_decim_state;
+static int16_t s_raw_samples[1024];
+static int16_t s_mono_samples[512];
 
 static esp_err_t codec_i2c_init(void)
 {
@@ -75,6 +80,7 @@ static esp_err_t i2s_driver_init(void)
 
 esp_err_t audio_input_init(void)
 {
+    audio_decim_init(&s_decim_state);
     ESP_RETURN_ON_ERROR(i2s_driver_init(), TAG, "i2s driver init");
     ESP_RETURN_ON_ERROR(codec_i2c_init(), TAG, "codec init");
     ESP_LOGI(TAG, "ES7210/I2S TDM audio backend ready: codec %d Hz, modem %d Hz",
@@ -98,16 +104,17 @@ size_t audio_input_read(int16_t *samples, size_t max_samples, uint32_t timeout_m
         max_samples = 256;
     }
 
-    int16_t raw[1024];
     size_t bytes_read = 0;
-    const size_t bytes_requested = max_samples * decim * sizeof(raw[0]) * 2;
-    const esp_err_t err = i2s_channel_read(s_rx_handle, raw, bytes_requested, &bytes_read, timeout_ms);
+    const size_t bytes_requested = max_samples * decim * sizeof(s_raw_samples[0]) * 2;
+    const esp_err_t err = i2s_channel_read(s_rx_handle, s_raw_samples, bytes_requested, &bytes_read, timeout_ms);
     if (err != ESP_OK || bytes_read < sizeof(int16_t) * 2) {
         return 0;
     }
 
     const size_t frames = bytes_read / (sizeof(int16_t) * 2);
-    const size_t out_count = (frames / decim) < max_samples ? (frames / decim) : max_samples;
+    const size_t mono_count = frames < (sizeof(s_mono_samples) / sizeof(s_mono_samples[0])) ?
+                              frames : (sizeof(s_mono_samples) / sizeof(s_mono_samples[0]));
+    const bool use_left = BOARD_AUDIO_INPUT_CHANNEL == 0;
     int16_t l_min = INT16_MAX;
     int16_t l_max = INT16_MIN;
     int16_t r_min = INT16_MAX;
@@ -119,9 +126,9 @@ size_t audio_input_read(int16_t *samples, size_t max_samples, uint32_t timeout_m
     size_t l_clip_count = 0;
     size_t r_clip_count = 0;
 
-    for (size_t i = 0; i < frames; ++i) {
-        const int16_t left = raw[i * 2];
-        const int16_t right = raw[i * 2 + 1];
+    for (size_t i = 0; i < mono_count; ++i) {
+        const int16_t left = s_raw_samples[i * 2];
+        const int16_t right = s_raw_samples[i * 2 + 1];
         if (left < l_min) {
             l_min = left;
         }
@@ -144,21 +151,17 @@ size_t audio_input_read(int16_t *samples, size_t max_samples, uint32_t timeout_m
         if (right <= INT16_MIN + 1 || right >= INT16_MAX - 1) {
             r_clip_count++;
         }
+        s_mono_samples[i] = use_left ? left : right;
     }
 
-    const bool use_left = BOARD_AUDIO_INPUT_CHANNEL == 0;
+    const size_t out_count = audio_decim_process(&s_decim_state, s_mono_samples, mono_count, samples, decim);
     int16_t s_min = INT16_MAX;
     int16_t s_max = INT16_MIN;
     int64_t s_abs_sum = 0;
     int64_t s_sum_sq = 0;
     size_t s_clip_count = 0;
     for (size_t i = 0; i < out_count; ++i) {
-        int32_t acc = 0;
-        for (size_t d = 0; d < decim; ++d) {
-            const size_t frame = i * decim + d;
-            acc += use_left ? raw[frame * 2] : raw[frame * 2 + 1];
-        }
-        int32_t sample32 = (acc / (int32_t)decim) * BOARD_AUDIO_SOFTWARE_GAIN;
+        int32_t sample32 = (int32_t)samples[i] * BOARD_AUDIO_SOFTWARE_GAIN;
         if (sample32 > INT16_MAX) {
             sample32 = INT16_MAX;
         } else if (sample32 < INT16_MIN) {
@@ -184,13 +187,13 @@ size_t audio_input_read(int16_t *samples, size_t max_samples, uint32_t timeout_m
     const int64_t now_us = esp_timer_get_time();
     if (now_us - last_log_us >= 1000000) {
         last_log_us = now_us;
-        const int32_t l_rms = frames ? (int32_t)sqrt((double)l_sum_sq / (double)frames) : 0;
-        const int32_t r_rms = frames ? (int32_t)sqrt((double)r_sum_sq / (double)frames) : 0;
+        const int32_t l_rms = mono_count ? (int32_t)sqrt((double)l_sum_sq / (double)mono_count) : 0;
+        const int32_t r_rms = mono_count ? (int32_t)sqrt((double)r_sum_sq / (double)mono_count) : 0;
         const int32_t s_rms = out_count ? (int32_t)sqrt((double)s_sum_sq / (double)out_count) : 0;
         ESP_LOGI(TAG, "rx bytes=%u frames=%u ch=%c L[%d,%d] abs=%d rms=%d clip=%u R[%d,%d] abs=%d rms=%d clip=%u S[%d,%d] abs=%d rms=%d clip=%u",
                  (unsigned)bytes_read, (unsigned)frames, use_left ? 'L' : 'R',
-                 l_min, l_max, frames ? (int)(l_abs_sum / (int64_t)frames) : 0, (int)l_rms, (unsigned)l_clip_count,
-                 r_min, r_max, frames ? (int)(r_abs_sum / (int64_t)frames) : 0, (int)r_rms, (unsigned)r_clip_count,
+                 l_min, l_max, mono_count ? (int)(l_abs_sum / (int64_t)mono_count) : 0, (int)l_rms, (unsigned)l_clip_count,
+                 r_min, r_max, mono_count ? (int)(r_abs_sum / (int64_t)mono_count) : 0, (int)r_rms, (unsigned)r_clip_count,
                  s_min, s_max, out_count ? (int)(s_abs_sum / (int64_t)out_count) : 0, (int)s_rms, (unsigned)s_clip_count);
     }
 #endif
