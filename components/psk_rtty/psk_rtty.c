@@ -106,6 +106,11 @@ static uint16_t s_vit_sequence0[256];
 static uint16_t s_vit_sequence1[256];
 static uint8_t s_inlv_table0[2560];
 static uint8_t s_inlv_table1[2560];
+#if !defined(ESP_PLATFORM)
+static double s_ls_matrix[48][49] PSK_SDRAM_BSS;
+static double s_ls_coeff[48] PSK_SDRAM_BSS;
+static double s_ls_scale[48] PSK_SDRAM_BSS;
+#endif
 static fec_branch_state_t s_fec_branch[2] = {
     {.decisions = s_vit_decisions0, .metrics_a = s_vit_metrics0_a, .metrics_b = s_vit_metrics0_b,
      .sequence = s_vit_sequence0, .inlv_table = s_inlv_table0, .bit_acc = 1U},
@@ -120,6 +125,11 @@ static uint8_t s_vit_input_flip;
 static float circular_distance(float a, float b);
 static float channel_sync_energy(const psk_rtty_rx_t *rx);
 static void finish_channel_psk_symbol(psk_rtty_rx_t *rx);
+static void psk_channel_rx_feed(psk_rtty_rx_t *rx, const int16_t *samples, size_t count);
+static uint8_t phase_index(float angle, uint8_t count);
+static uint8_t inverse_psk_symbol(const psk_rtty_rx_t *rx, float angle, float dot);
+static void process_raw_symbol(psk_rtty_rx_t *rx, uint8_t symbol, uint8_t phase_idx,
+                               float angle, float signal_amp);
 static float nearest_phase_distance(float angle, uint8_t states);
 static void update_quality_squelch(psk_rtty_rx_t *rx, float dist, float step, int valid);
 static void prepare_viterbi_tables(const psk_rtty_rx_t *rx, uint16_t nstates);
@@ -467,7 +477,15 @@ static void reset_runtime(psk_rtty_rx_t *rx)
     memset(rx->carrier_q_acc, 0, sizeof(rx->carrier_q_acc));
     memset(rx->carrier_i_prev, 0, sizeof(rx->carrier_i_prev));
     memset(rx->carrier_q_prev, 0, sizeof(rx->carrier_q_prev));
+#if !defined(ESP_PLATFORM)
+    memset(rx->carrier_symbol_start_cos, 0, sizeof(rx->carrier_symbol_start_cos));
+    memset(rx->carrier_symbol_start_sin, 0, sizeof(rx->carrier_symbol_start_sin));
+    memset(rx->ls_symbol_samples, 0, sizeof(rx->ls_symbol_samples));
+#endif
     memset(rx->carrier_has_prev, 0, sizeof(rx->carrier_has_prev));
+#if !defined(ESP_PLATFORM)
+    rx->ls_symbol_sample_count = 0;
+#endif
     const float spacing = 1.4f * params.baud;
     const float first = (float)rx->config.rx_tone_hz + (((-1.0f * (float)params.carriers) + 1.0f) * spacing * 0.5f);
     for (uint8_t car = 0; car < MAX_PSK_CARRIERS; ++car) {
@@ -1218,6 +1236,205 @@ static PSK_FAST_TEXT int symbol_sync(psk_rtty_rx_t *rx, float energy)
     return trigger;
 }
 
+#if !defined(ESP_PLATFORM)
+static int solve_linear_system(double matrix[48][49], uint8_t n, double out[48])
+{
+    for (uint8_t col = 0; col < n; ++col) {
+        uint8_t pivot = col;
+        double best = fabs(matrix[col][col]);
+        for (uint8_t row = (uint8_t)(col + 1U); row < n; ++row) {
+            const double value = fabs(matrix[row][col]);
+            if (value > best) {
+                best = value;
+                pivot = row;
+            }
+        }
+        if (best < 1.0e-6f) {
+            return 0;
+        }
+        if (pivot != col) {
+            for (uint8_t k = col; k <= n; ++k) {
+                const double tmp = matrix[col][k];
+                matrix[col][k] = matrix[pivot][k];
+                matrix[pivot][k] = tmp;
+            }
+        }
+        const double div = matrix[col][col];
+        for (uint8_t k = col; k <= n; ++k) {
+            matrix[col][k] /= div;
+        }
+        for (uint8_t row = 0; row < n; ++row) {
+            if (row == col) {
+                continue;
+            }
+            const double factor = matrix[row][col];
+            if (factor == 0.0f) {
+                continue;
+            }
+            for (uint8_t k = col; k <= n; ++k) {
+                matrix[row][k] -= factor * matrix[col][k];
+            }
+        }
+    }
+
+    for (uint8_t i = 0; i < n; ++i) {
+        out[i] = matrix[i][n];
+    }
+    return 1;
+}
+
+static void finish_multicarrier_bpsk_symbol(psk_rtty_rx_t *rx)
+{
+    uint8_t active = rx->carriers;
+    if (active == 0U || active > MAX_PSK_CARRIERS) {
+        active = 1U;
+    }
+
+    const uint16_t sps = (uint16_t)(rx->symbol_period_samples + 0.5f);
+    const uint8_t unknowns = (uint8_t)(active * 4U);
+    double (*matrix)[49] = s_ls_matrix;
+    double *coeff = s_ls_coeff;
+    memset(s_ls_matrix, 0, sizeof(s_ls_matrix));
+    memset(s_ls_coeff, 0, sizeof(s_ls_coeff));
+
+    float car_cos[MAX_PSK_CARRIERS];
+    float car_sin[MAX_PSK_CARRIERS];
+    for (uint8_t car = 0; car < active; ++car) {
+        car_cos[car] = rx->carrier_symbol_start_cos[car];
+        car_sin[car] = rx->carrier_symbol_start_sin[car];
+    }
+
+    for (uint16_t n = 0; n < sps; ++n) {
+        float col[48];
+        const float shape = 0.5f * cosf((float)M_PI * (float)n / (float)sps) + 0.5f;
+        const float current_shape = 1.0f - shape;
+        const double sample = (double)rx->ls_symbol_samples[n];
+        for (uint8_t car = 0; car < active; ++car) {
+            const uint8_t base = (uint8_t)(car * 4U);
+            col[base + 0U] = shape * car_cos[car];
+            col[base + 1U] = shape * car_sin[car];
+            col[base + 2U] = current_shape * car_cos[car];
+            col[base + 3U] = current_shape * car_sin[car];
+
+            const float next_cos = car_cos[car] * rx->carrier_rot_cos[car] -
+                                   car_sin[car] * rx->carrier_rot_sin[car];
+            const float next_sin = car_cos[car] * rx->carrier_rot_sin[car] +
+                                   car_sin[car] * rx->carrier_rot_cos[car];
+            car_cos[car] = next_cos;
+            car_sin[car] = next_sin;
+        }
+        for (uint8_t row = 0; row < unknowns; ++row) {
+            for (uint8_t c = row; c < unknowns; ++c) {
+                matrix[row][c] += col[row] * col[c];
+            }
+            matrix[row][unknowns] += col[row] * sample;
+        }
+    }
+    for (uint8_t row = 1; row < unknowns; ++row) {
+        for (uint8_t c = 0; c < row; ++c) {
+            matrix[row][c] = matrix[c][row];
+        }
+    }
+
+    double *scale = s_ls_scale;
+    for (uint8_t row = 0; row < unknowns; ++row) {
+        scale[row] = sqrt(fabs(matrix[row][row]));
+        if (scale[row] < 1.0e-6f) {
+            scale[row] = 1.0f;
+        }
+    }
+    for (uint8_t row = 0; row < unknowns; ++row) {
+        for (uint8_t c = 0; c < unknowns; ++c) {
+            matrix[row][c] /= scale[row] * scale[c];
+        }
+        matrix[row][unknowns] /= scale[row];
+        matrix[row][row] += 1.0e-6;
+    }
+
+    if (!solve_linear_system(matrix, unknowns, coeff)) {
+        update_quality_squelch(rx, (float)M_PI, (float)M_PI, 0);
+        return;
+    }
+    for (uint8_t row = 0; row < unknowns; ++row) {
+        coeff[row] /= scale[row];
+    }
+
+    float dist_sum = 0.0f;
+    float mag_sum = 0.0f;
+    uint8_t dist_count = 0U;
+    for (uint8_t car = 0; car < active; ++car) {
+        const uint8_t base = (uint8_t)(car * 4U);
+        const float i = (float)coeff[base + 2U];
+        const float q = (float)coeff[base + 3U];
+        const float mag = sqrtf(i * i + q * q);
+        mag_sum += mag;
+
+        if (rx->carrier_has_prev[car]) {
+            const float pi = rx->carrier_i_prev[car];
+            const float pq = rx->carrier_q_prev[car];
+            const float dot = pi * i + pq * q;
+            const float cross = pi * q - pq * i;
+            float angle = atan2f(cross, dot);
+            if (angle < 0.0f) {
+                angle += TWO_PI;
+            }
+            if (mag > 1.0f) {
+                dist_sum += nearest_phase_distance(angle, 2U);
+                dist_count++;
+            }
+            const uint8_t phase_idx = phase_index(angle, 2U);
+            process_raw_symbol(rx, inverse_psk_symbol(rx, angle, dot), phase_idx, angle, mag);
+        }
+        rx->carrier_i_prev[car] = i;
+        rx->carrier_q_prev[car] = q;
+        rx->carrier_has_prev[car] = 1U;
+    }
+
+    rx->agc_ave = mag_sum / (float)active;
+    const float avg_dist = dist_count ? (dist_sum / (float)dist_count) : (float)M_PI;
+    update_quality_squelch(rx, avg_dist, (float)M_PI, dist_count > 0U);
+}
+
+static void psk_multicarrier_bpsk_rx_feed(psk_rtty_rx_t *rx, const int16_t *samples, size_t count)
+{
+    uint8_t active = rx->carriers;
+    if (active == 0U || active > MAX_PSK_CARRIERS) {
+        active = 1U;
+    }
+
+    const uint16_t sps = (uint16_t)(rx->symbol_period_samples + 0.5f);
+    if (sps == 0U || sps > (uint16_t)(sizeof(rx->ls_symbol_samples) / sizeof(rx->ls_symbol_samples[0]))) {
+        psk_channel_rx_feed(rx, samples, count);
+        return;
+    }
+
+    for (size_t n = 0; n < count; ++n) {
+        if (rx->ls_symbol_sample_count == 0U) {
+            for (uint8_t car = 0; car < active; ++car) {
+                rx->carrier_symbol_start_cos[car] = rx->carrier_cos[car];
+                rx->carrier_symbol_start_sin[car] = rx->carrier_sin[car];
+            }
+        }
+
+        rx->ls_symbol_samples[rx->ls_symbol_sample_count++] = samples[n];
+        for (uint8_t car = 0; car < active; ++car) {
+            const float next_cos = rx->carrier_cos[car] * rx->carrier_rot_cos[car] -
+                                   rx->carrier_sin[car] * rx->carrier_rot_sin[car];
+            const float next_sin = rx->carrier_cos[car] * rx->carrier_rot_sin[car] +
+                                   rx->carrier_sin[car] * rx->carrier_rot_cos[car];
+            rx->carrier_cos[car] = next_cos;
+            rx->carrier_sin[car] = next_sin;
+        }
+        rx->sample_count++;
+
+        if (rx->ls_symbol_sample_count >= sps) {
+            finish_multicarrier_bpsk_symbol(rx);
+            rx->ls_symbol_sample_count = 0U;
+        }
+    }
+}
+#endif
+
 static PSK_FAST_TEXT void psk_channel_rx_feed(psk_rtty_rx_t *rx, const int16_t *samples, size_t count)
 {
     if (rx->afc_timer > 0 && --rx->afc_timer <= 0) {
@@ -1624,6 +1841,12 @@ static PSK_FAST_TEXT void finish_channel_psk_symbol(psk_rtty_rx_t *rx)
 
 static void psk_pipeline_rx_feed(psk_rtty_rx_t *rx, const int16_t *samples, size_t count)
 {
+#if !defined(ESP_PLATFORM)
+    if (rx->carriers > 1U && rx->psk_family == PSK_FAMILY_BPSK && !rx->fec_enabled) {
+        psk_multicarrier_bpsk_rx_feed(rx, samples, count);
+        return;
+    }
+#endif
     psk_channel_rx_feed(rx, samples, count);
 }
 

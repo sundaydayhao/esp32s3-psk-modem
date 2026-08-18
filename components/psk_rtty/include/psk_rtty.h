@@ -104,7 +104,15 @@ typedef struct {
     float carrier_q_acc[12];
     float carrier_i_prev[12];
     float carrier_q_prev[12];
+#if !defined(ESP_PLATFORM)
+    float carrier_symbol_start_cos[12];
+    float carrier_symbol_start_sin[12];
+    int16_t ls_symbol_samples[384];
+#endif
     uint8_t carrier_has_prev[12];
+#if !defined(ESP_PLATFORM)
+    uint16_t ls_symbol_sample_count;
+#endif
     uint8_t carriers;
     uint8_t bits_per_symbol;
     uint8_t psk_family;

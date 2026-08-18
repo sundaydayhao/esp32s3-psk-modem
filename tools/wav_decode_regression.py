@@ -157,17 +157,19 @@ def parity(value: int) -> int:
 
 
 class FullViterbiDecoder:
+    MAX_TRACEBACK = 192
+
     def __init__(self, k: int, poly1: int, poly2: int) -> None:
         self.k = k
         self.poly1 = poly1
         self.poly2 = poly2
         self.nstates = 1 << (k - 1)
-        self.traceback = min(k * 12, 64)
+        self.traceback = min(k * 12, self.MAX_TRACEBACK)
         self.chunksize = 8
         self.step = 0
         self.pair_count = 0
         self.metrics = np.zeros(self.nstates, dtype=np.int16)
-        self.decisions = np.zeros((64, self.nstates), dtype=np.bool_)
+        self.decisions = np.zeros((self.MAX_TRACEBACK, self.nstates), dtype=np.bool_)
         states = np.arange(self.nstates, dtype=np.uint32)
         self.p0 = states >> 1
         self.p1 = (states + self.nstates) >> 1
@@ -189,12 +191,12 @@ class FullViterbiDecoder:
         state = int(np.argmax(self.metrics))
         seq = [0] * (self.traceback + 1)
         seq[self.traceback] = state
-        step = (self.step - 1) % 64
+        step = (self.step - 1) % self.MAX_TRACEBACK
         for i in range(self.traceback - 1, -1, -1):
             decision = bool(self.decisions[step, state])
             state = (state + (self.nstates if decision else 0)) >> 1
             seq[i] = state
-            step = (step - 1) % 64
+            step = (step - 1) % self.MAX_TRACEBACK
         return [seq[i] & 1 for i in range(self.chunksize)]
 
     def decode_pair(self, b0: int | None, b1: int | None) -> list[int]:
@@ -206,7 +208,7 @@ class FullViterbiDecoder:
         if mx > 12000:
             self.metrics = (self.metrics - mx).astype(np.int16)
         self.decisions[self.step, :] = decision
-        self.step = (self.step + 1) % 64
+        self.step = (self.step + 1) % self.MAX_TRACEBACK
         self.pair_count += 1
         if self.pair_count % self.chunksize == 0 and self.pair_count > self.traceback:
             return self.traceback_bits()
@@ -310,8 +312,8 @@ def demod_symbols(samples: np.ndarray, rate: int, mode: ModeInfo, tone_hz: float
     start = find_signal_start(samples, rate)
     start = int((start // sps) * sps)
     if mode.carriers > 1:
-        win0, win1 = 0.45, 0.95
-    elif mode.name == "QPSK31":
+        return demod_multicarrier_symbols(samples, rate, mode, tone_hz, start)
+    if mode.name == "QPSK31":
         win0, win1 = 0.25, 0.75
     else:
         win0, win1 = 0.62, 0.96
@@ -348,6 +350,66 @@ def demod_symbols(samples: np.ndarray, rate: int, mode: ModeInfo, tone_hz: float
                 angle += 2.0 * math.pi
             idx_count = 4 if mode.family == "QPSK" else (8 if mode.family == "8PSK" else 2)
             idx = nearest_phase_index(angle, idx_count)
+            frame_symbols.append(inverse_symbol(mode, angle) | (idx << 4))
+            prev[car] = symbol
+        if good and len(frame_symbols) == mode.carriers:
+            out.extend(frame_symbols)
+        pos += sps
+    return out
+
+
+def demod_multicarrier_symbols(
+    samples: np.ndarray,
+    rate: int,
+    mode: ModeInfo,
+    tone_hz: float,
+    start: int,
+) -> list[int]:
+    """Estimate non-orthogonal xPSK carriers with a per-symbol least-squares fit."""
+    sps = int(round(rate / mode.baud))
+    spacing = 1.4 * mode.baud
+    first = tone_hz + ((-1 * mode.carriers) + 1) * spacing / 2.0
+    shape = 0.5 * np.cos(np.arange(sps, dtype=np.float64) * math.pi / sps) + 0.5
+    current_shape = 1.0 - shape
+    previous_shape = shape
+    prev: list[complex | None] = [None] * mode.carriers
+    out: list[int] = []
+
+    pos = start
+    while pos + sps < len(samples):
+        n = np.arange(pos, pos + sps, dtype=np.float64)
+        block = samples[pos : pos + sps]
+        columns: list[np.ndarray] = []
+        for car in range(mode.carriers):
+            freq = first + car * spacing
+            phase = 2.0 * math.pi * freq * n / rate
+            cosv = np.cos(phase)
+            sinv = np.sin(phase)
+            columns.extend((
+                previous_shape * cosv,
+                previous_shape * sinv,
+                current_shape * cosv,
+                current_shape * sinv,
+            ))
+        coeff = np.linalg.lstsq(np.stack(columns, axis=1), block, rcond=None)[0]
+
+        frame_symbols: list[int] = []
+        good = True
+        for car in range(mode.carriers):
+            symbol = complex(coeff[4 * car + 2], coeff[4 * car + 3])
+            if abs(symbol) < 1.0:
+                prev[car] = None
+                good = False
+                continue
+            if prev[car] is None:
+                prev[car] = symbol
+                good = False
+                continue
+            diff = symbol * prev[car].conjugate()
+            angle = math.atan2(diff.imag, diff.real)
+            if angle < 0.0:
+                angle += 2.0 * math.pi
+            idx = nearest_phase_index(angle, 2)
             frame_symbols.append(inverse_symbol(mode, angle) | (idx << 4))
             prev[car] = symbol
         if good and len(frame_symbols) == mode.carriers:
@@ -501,6 +563,17 @@ def mode_skip_reason(mode: ModeInfo) -> str | None:
     return None
 
 
+def symbol_warmup_skip(mode: ModeInfo) -> int:
+    # These K=16 8PSK-F WAVs start with a non-FEC 8PSK sync preamble before
+    # the Gray-coded FEC stream. Skip it so the long deinterleaver is not
+    # seeded with symbols from the wrong phase alphabet.
+    if mode.name == "8PSK125F":
+        return 59
+    if mode.name == "8PSK250F":
+        return 125
+    return 0
+
+
 def run_one(
     wav_path: Path,
     mode: ModeInfo,
@@ -515,6 +588,9 @@ def run_one(
         return "SKIP", reason, 0, ""
     rate, samples = read_wav_mono(wav_path)
     symbols = demod_symbols(samples, rate, mode, tone_hz)
+    warmup = symbol_warmup_skip(mode)
+    if warmup:
+        symbols = symbols[warmup:]
     decoded = decode_symbols(symbols, mode, varicode, mfsk_varicode)
     matched_len, fragment = longest_expected_fragment(decoded, expected, min_fragment)
     if matched_len >= min_fragment:

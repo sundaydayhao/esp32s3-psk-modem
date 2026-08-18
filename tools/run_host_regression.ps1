@@ -14,6 +14,12 @@ if (-not (Test-Path $Exe)) {
     exit 1
 }
 
+$cygwinBin = "C:\cygwin64\bin"
+if (Test-Path $cygwinBin) {
+    $env:PATH = "$cygwinBin;$env:PATH"
+}
+$env:PSK_HOST_NATIVE = "1"
+
 Write-Output "EXE=$Exe"
 Write-Output "WAV_DIR=$WavDir"
 Write-Output "EXPECTED=$Expected"

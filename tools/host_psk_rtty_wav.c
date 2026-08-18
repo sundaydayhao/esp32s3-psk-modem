@@ -295,7 +295,8 @@ int main(int argc, char **argv)
     size_t decode_count = count;
     int decode_rate = rate;
     int16_t *decimated = NULL;
-    if (rate == HOST_CODEC_RATE_HZ) {
+    const int use_native = getenv("PSK_HOST_NATIVE") != NULL;
+    if (rate == HOST_CODEC_RATE_HZ && !use_native) {
         decimated = (int16_t *)malloc((count / HOST_DECIMATION + 1U) * sizeof(int16_t));
         if (!decimated) {
             fprintf(stderr, "out of memory decimating %s\n", argv[2]);
@@ -307,7 +308,7 @@ int main(int argc, char **argv)
         decode_count = audio_decim_process(&decim_state, samples, count, decimated, HOST_DECIMATION);
         decode_samples = decimated;
         decode_rate = HOST_DECODE_RATE_HZ;
-    } else {
+    } else if (rate != HOST_CODEC_RATE_HZ) {
         fprintf(stderr,
                 "warning: %s is %d Hz, not the codec rate %d Hz - decoding at native rate "
                 "instead of replaying through the real audio_input.c decimation path\n",
