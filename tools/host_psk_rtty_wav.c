@@ -1,5 +1,6 @@
 #include "psk_rtty.h"
 #include "audio_decim.h"
+#include "psk_modes.h"
 
 #include <ctype.h>
 #include <stdint.h>
@@ -126,6 +127,16 @@ static int read_wav_mono16(const char *path, int16_t **samples, size_t *count, i
 
 static psk_rtty_mode_t parse_mode(const char *name)
 {
+    for (size_t i = 0; i < psk_mode_count(); ++i) {
+        const psk_mode_info_t *info = psk_mode_info_at(i);
+        if (!strcmp(name, info->name)) {
+            if (!psk_mode_can_decode(info->id)) {
+                fprintf(stderr, "mode unavailable in online S3 profile: %s\n", name);
+                exit(2);
+            }
+            return info->backend_mode;
+        }
+    }
     if (strcmp(name, "BPSK31") == 0) {
         return PSK_RTTY_MODE_BPSK31;
     }
@@ -279,7 +290,7 @@ static int has_expected_fragment(const char *decoded, const char *expected_path,
 int main(int argc, char **argv)
 {
     if (argc < 4) {
-        fprintf(stderr, "usage: %s MODE WAV EXPECTED [match_len]\n", argv[0]);
+        fprintf(stderr, "usage: %s MODE WAV EXPECTED [match_len] [decoded.bin]\n", argv[0]);
         return 2;
     }
 
@@ -296,8 +307,9 @@ int main(int argc, char **argv)
     int decode_rate = rate;
     int16_t *decimated = NULL;
     const int use_native = getenv("PSK_HOST_NATIVE") != NULL;
-    if (rate == HOST_CODEC_RATE_HZ && !use_native) {
-        decimated = (int16_t *)malloc((count / HOST_DECIMATION + 1U) * sizeof(int16_t));
+    if ((rate == HOST_CODEC_RATE_HZ || rate == HOST_DECODE_RATE_HZ) && !use_native) {
+        uint32_t decimation = rate / HOST_DECODE_RATE_HZ;
+        decimated = (int16_t *)malloc((count / decimation + 1U) * sizeof(int16_t));
         if (!decimated) {
             fprintf(stderr, "out of memory decimating %s\n", argv[2]);
             free(samples);
@@ -305,7 +317,7 @@ int main(int argc, char **argv)
         }
         audio_decim_state_t decim_state;
         audio_decim_init(&decim_state);
-        decode_count = audio_decim_process(&decim_state, samples, count, decimated, HOST_DECIMATION);
+        decode_count = audio_decim_process(&decim_state, samples, count, decimated, decimation);
         decode_samples = decimated;
         decode_rate = HOST_DECODE_RATE_HZ;
     } else if (rate != HOST_CODEC_RATE_HZ) {
@@ -324,6 +336,8 @@ int main(int argc, char **argv)
         .userdata = &decoded,
     };
     psk_rtty_rx_t rx;
+    const char *tone_env = getenv("PSK_HOST_TONE");
+    if (tone_env) cfg.rx_tone_hz = (int)strtol(tone_env, NULL, 10);
     psk_rtty_rx_init(&rx, &cfg);
     rx.sq_thresh = 35;
     const char *warmup = getenv("PSK_WARMUP");
@@ -331,7 +345,7 @@ int main(int argc, char **argv)
         rx.warmup_symbols = (int)strtol(warmup, NULL, 10);
     }
 
-    const size_t block = 512;
+    const size_t block = 64; /* Same feed boundaries as the firmware. */
     for (size_t pos = 0; pos < decode_count; pos += block) {
         size_t n = decode_count - pos;
         if (n > block) {
@@ -350,6 +364,14 @@ int main(int argc, char **argv)
     if (decoded.data) {
         fwrite(decoded.data, 1, decoded.len < 500 ? decoded.len : 500, stdout);
         fputc('\n', stdout);
+    }
+
+    if (argc >= 6) {
+        FILE *output = fopen(argv[5], "wb");
+        if (!output) { fprintf(stderr, "cannot write decoded bytes\n"); return 2; }
+        size_t written = decoded.len ? fwrite(decoded.data, 1, decoded.len, output) : 0;
+        fclose(output);
+        if (written != decoded.len) return 2;
     }
 
     free(decoded.data);

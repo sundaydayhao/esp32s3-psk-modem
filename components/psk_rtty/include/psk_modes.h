@@ -5,6 +5,8 @@
 
 #include "psk_rtty.h"
 
+#define PSK_DEFAULT_TONE_HZ 2000
+
 typedef enum {
     PSK_MODE_FAMILY_BPSK = 0,
     PSK_MODE_FAMILY_QPSK,
@@ -39,6 +41,7 @@ typedef enum {
     PSK_MODE_8PSK500F,
     PSK_MODE_8PSK1000F,
     PSK_MODE_8PSK1200F,
+    PSK_MODE_2X8PSK1200F,
     PSK_MODE_COUNT
 } psk_mode_t;
 
@@ -54,6 +57,12 @@ typedef struct {
     uint8_t punctured;
     uint8_t decode_supported;
     psk_rtty_mode_t backend_mode;
+    uint8_t fec_k;
+    uint32_t fec_poly1;
+    uint32_t fec_poly2;
+    uint16_t interleave_depth;
+    uint8_t dual_fec_branch;
+    uint8_t mfsk_varicode;
 } psk_mode_info_t;
 
 const psk_mode_info_t *psk_mode_info(psk_mode_t mode);
@@ -62,3 +71,4 @@ size_t psk_mode_count(void);
 const char *psk_mode_family_name(psk_mode_family_t family);
 const char *psk_mode_name(psk_mode_t mode);
 int psk_mode_can_decode(psk_mode_t mode);
+int psk_mode_is_experimental(psk_mode_t mode);

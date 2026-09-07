@@ -4,6 +4,12 @@
 #include <string.h>
 #include <stdlib.h>
 #include <limits.h>
+#ifdef ESP_PLATFORM
+#include "esp_attr.h"
+#define OPTIONAL_DSP_BSS EXT_RAM_BSS_ATTR
+#else
+#define OPTIONAL_DSP_BSS
+#endif
 
 #include "common/monitor.h"
 #include "ft8/decode.h"
@@ -24,6 +30,11 @@
 #define MFSK16_POLY1 0x6d
 #define MFSK16_POLY2 0x4f
 #define MFSK16_PUNCTURE 128
+
+/* One decoder owner, like the PSK FEC backend. Keep the infrequently used
+ * 48 KiB MFSK history out of SRAM needed by Wi-Fi, I2S DMA and task stacks. */
+static int16_t s_mfsk_metrics[256][64] OPTIONAL_DSP_BSS;
+static uint8_t s_mfsk_history[256][64] OPTIONAL_DSP_BSS;
 
 static const char s_cw_table[128] = {
     [2] = 'E', [3] = 'T',
@@ -172,10 +183,12 @@ static int mfsk16_varidec(uint32_t symbol)
 
 static void reset_mfsk16_state(decoder_layer_t *d)
 {
+    d->mfsk_viterbi_metric = s_mfsk_metrics;
+    d->mfsk_viterbi_history = s_mfsk_history;
     memset(d->mfsk_interleave, MFSK16_PUNCTURE, sizeof(d->mfsk_interleave));
     memset(d->mfsk_symbol_pair, MFSK16_PUNCTURE, sizeof(d->mfsk_symbol_pair));
-    memset(d->mfsk_viterbi_metric, 0, sizeof(d->mfsk_viterbi_metric));
-    memset(d->mfsk_viterbi_history, 0, sizeof(d->mfsk_viterbi_history));
+    memset(s_mfsk_metrics, 0, sizeof(s_mfsk_metrics));
+    memset(s_mfsk_history, 0, sizeof(s_mfsk_history));
     memset(d->mfsk_viterbi_sequence, 0, sizeof(d->mfsk_viterbi_sequence));
     d->mfsk_symbol_phase = 0;
     d->mfsk_data_shift = 1;
@@ -378,7 +391,7 @@ void decoder_layer_set_mode(decoder_layer_t *d, modem_mode_t mode)
     d->config.mode = mode;
     if (mode == MODEM_MODE_BPSK31) {
         d->config.psk_mode = PSK_MODE_BPSK31;
-    } else if (mode == MODEM_MODE_PSK63) {
+    } else if (mode == MODEM_MODE_PSK63 && d->config.psk_mode == PSK_MODE_BPSK31) {
         d->config.psk_mode = PSK_MODE_BPSK63;
     }
     recreate_backend(d);
@@ -386,7 +399,7 @@ void decoder_layer_set_mode(decoder_layer_t *d, modem_mode_t mode)
 
 void decoder_layer_set_psk_mode(decoder_layer_t *d, psk_mode_t mode)
 {
-    if ((unsigned)mode >= PSK_MODE_COUNT) {
+    if (!psk_mode_can_decode(mode)) {
         return;
     }
     d->config.psk_mode = mode;

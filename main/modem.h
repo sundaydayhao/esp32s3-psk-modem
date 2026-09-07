@@ -37,4 +37,5 @@ struct modem {
     char *out;
     size_t out_size;
     size_t out_len;
+    uint32_t output_dropped_bytes;
 };

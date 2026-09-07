@@ -16,9 +16,10 @@
 #include "spectrum.h"
 #include "transport.h"
 #include "ui.h"
+#include "web_rx.h"
 
 static const char *TAG = "psk-modem";
-#define TWO_PI_F 6.28318530717958647692f
+
 
 typedef struct {
     char text[96];
@@ -30,6 +31,7 @@ typedef struct {
     size_t count;
 } spectrum_msg_t;
 
+static uint32_t s_lcd_drops;
 static QueueHandle_t s_decoded_queue;
 static QueueHandle_t s_control_queue;
 static QueueHandle_t s_spectrum_queue;
@@ -47,7 +49,7 @@ static int32_t calc_block_rms(const int16_t *samples, size_t count)
     for (size_t i = 0; i < count; ++i) {
         sum_sq += (int32_t)samples[i] * (int32_t)samples[i];
     }
-    return (int32_t)sqrt((double)sum_sq / (double)count);
+    return (int32_t)sqrtf((float)sum_sq / (float)count);
 }
 
 static void publish_decoded_text(const char *decoded, size_t decoded_len)
@@ -66,7 +68,7 @@ static void publish_decoded_text(const char *decoded, size_t decoded_len)
         msg.text[i] = (ch >= 0x20 && ch < 0x7f) || ch == '\r' || ch == '\n' ? (char)ch : '.';
     }
     msg.text[shown] = '\0';
-    (void)xQueueSend(s_decoded_queue, &msg, 0);
+    if (xQueueSend(s_decoded_queue, &msg, 0) != pdTRUE) s_lcd_drops += decoded_len;
 }
 
 static void apply_control_event(modem_t *modem, const ui_event_t *event)
@@ -92,105 +94,80 @@ static void apply_control_event(modem_t *modem, const ui_event_t *event)
 
 static void audio_task(void *arg)
 {
-    const modem_config_t modem_config = {
+    /* Allocate/configure I2S on core 1, so its interrupt follows the DSP owner. */
+    ESP_ERROR_CHECK(audio_input_init());
+    const modem_config_t config = {
         .mode = MODEM_MODE_PSK63,
-        .psk_mode = PSK_MODE_BPSK63,
+        .psk_mode = BOARD_DEFAULT_PSK_MODE,
         .sample_rate_hz = BOARD_MODEM_SAMPLE_RATE_HZ,
-        .rx_tone_hz = 1500,
+        .rx_tone_hz = BOARD_DEFAULT_TONE_HZ,
         .squelch = 30,
     };
     modem_t *modem = &s_audio_modem;
-    modem_init(modem, &modem_config);
-
-    int64_t last_status_log_us = 0;
-    uint32_t reads_this_second = 0;
-    uint32_t samples_this_second = 0;
-    int32_t last_rms = 0;
-#if BOARD_MODEM_DEBUG_LOGS
-    int last_peak_hz = 0;
-#endif
-    bool last_active = false;
-    bool decoder_active = false;
-    int active_hold_blocks = 0;
-
-    ESP_LOGI(TAG, "audio decode task started");
+    modem_init(modem, &config);
+    web_rx_status_t status = {0};
+    int64_t window_start = esp_timer_get_time();
+    uint32_t window_samples = 0, window_work_us = 0, window_budget_us = 0;
+    uint32_t last_overflows = audio_input_overflows();
 
     while (true) {
         ui_event_t event;
         while (xQueueReceive(s_control_queue, &event, 0) == pdTRUE) {
             apply_control_event(modem, &event);
         }
-
-        const size_t count = audio_input_read(s_audio_samples, 256, 50);
-        const int64_t now_us = esp_timer_get_time();
-        if (count > 0) {
-            reads_this_second++;
-            samples_this_second += count;
-
-            s_audio_spectrum_msg.count = count > SPECTRUM_MAX_SAMPLES ? SPECTRUM_MAX_SAMPLES : count;
-            memcpy(s_audio_spectrum_msg.samples, s_audio_samples,
-                   s_audio_spectrum_msg.count * sizeof(s_audio_spectrum_msg.samples[0]));
-            (void)xQueueOverwrite(s_spectrum_queue, &s_audio_spectrum_msg);
-
-            last_rms = calc_block_rms(s_audio_samples, count);
-            last_active = last_rms >= BOARD_AUDIO_ACTIVE_RMS_MIN;
-            if (last_active) {
-                active_hold_blocks = 1;
-                decoder_active = true;
-            } else if (active_hold_blocks > 0) {
-                active_hold_blocks--;
-            } else if (decoder_active) {
-                modem_set_mode(modem, modem_get_mode(modem));
-                decoder_active = false;
+        size_t count = audio_input_read(s_audio_samples, 256, 50);
+        int64_t work_start = esp_timer_get_time();
+        uint32_t overflows = audio_input_overflows();
+        if (overflows != last_overflows) {
+            /* Missing PCM breaks timing/FEC history: reacquire explicitly. */
+            modem_set_mode(modem, modem_get_mode(modem));
+            last_overflows = overflows;
+        }
+        if (count) {
+            s_audio_spectrum_msg.count = count;
+            memcpy(s_audio_spectrum_msg.samples, s_audio_samples, count * sizeof(int16_t));
+            xQueueOverwrite(s_spectrum_queue, &s_audio_spectrum_msg);
+            status.rms = calc_block_rms(s_audio_samples, count);
+            for (size_t i = 0; i < count; ++i)
+                if (s_audio_samples[i] >= 32766 || s_audio_samples[i] <= -32767) ++status.clips;
+            /* Feed every sample, including silence. An RMS gate must not discard
+             * symbol envelopes or reset long interleavers between quiet symbols. */
+            for (size_t pos = 0; pos < count; pos += 64) {
+                size_t n = count - pos;
+                if (n > 64) n = 64;
+                size_t len = modem_process(modem, s_audio_samples + pos, n,
+                                           s_audio_decoded, sizeof(s_audio_decoded));
+                publish_decoded_text(s_audio_decoded, len);
             }
-
-            if (last_active || active_hold_blocks > 0) {
-                const size_t chunk_samples = 64;
-                for (size_t pos = 0; pos < count; pos += chunk_samples) {
-                    size_t chunk_count = count - pos;
-                    if (chunk_count > chunk_samples) {
-                        chunk_count = chunk_samples;
-                    }
-                    const size_t decoded_len = modem_process(modem, s_audio_samples + pos, chunk_count,
-                                                             s_audio_decoded, sizeof(s_audio_decoded));
-                    publish_decoded_text(s_audio_decoded, decoded_len);
-                    vTaskDelay(pdMS_TO_TICKS(1));
-                }
-            }
+            uint32_t work_us = (uint32_t)(esp_timer_get_time() - work_start);
+            uint32_t budget_us = count * 1000000U / BOARD_MODEM_SAMPLE_RATE_HZ;
+            /* One tick per 16 ms block lets IDLE1 run even during overload.
+             * Include this reserved tick in deadline/load accounting. */
+            if (work_us + portTICK_PERIOD_MS * 1000U >= budget_us) ++status.overruns;
+            if (work_us > status.peak_work_us) status.peak_work_us = work_us;
+            window_samples += count;
+            window_work_us += work_us + portTICK_PERIOD_MS * 1000U;
+            window_budget_us += budget_us;
         }
-
-#if BOARD_MODEM_DEBUG_LOGS
-        if (now_us - last_status_log_us >= 5000000) {
-            last_status_log_us = now_us;
-            const psk_rtty_rx_t *rx = &modem->decoder.psk_rtty_rx;
-            spectrum_t debug_spectrum;
-            spectrum_analyze(s_audio_samples, count, BOARD_MODEM_SAMPLE_RATE_HZ, &debug_spectrum);
-            last_peak_hz = debug_spectrum.peak_hz;
-            const int nco_hz = (int)lrintf((rx->nco_phase_inc + rx->freq_error) *
-                                           (float)rx->config.sample_rate_hz / TWO_PI_F);
-            ESP_LOGI(TAG,
-                     "mode=%s rx=%d Hz nco=%d Hz peak=%d Hz rms=%d active=%d reads=%u samples=%u sq=%d lvl=%d agc=%d dev=%d pk=%d/%d/%d warm=%d sym=%u bits=%u z=%u o=%u dd=%u ch=%u unk=%u",
-                     modem_mode_name(modem_get_mode(modem)), modem_get_rx_tone(modem),
-                     nco_hz, last_peak_hz, (int)last_rms, last_active,
-                     (unsigned)reads_this_second, (unsigned)samples_this_second,
-                     rx->sq_open, rx->sq_level, (int)rx->agc_ave, (int)rx->dev_ave,
-                     rx->pk_pos, rx->new_pk_pos, rx->raw_pk_pos, rx->warmup_symbols,
-                     (unsigned)rx->debug_symbols, (unsigned)rx->debug_bits,
-                     (unsigned)rx->debug_zeros, (unsigned)rx->debug_ones,
-                     (unsigned)rx->debug_delims, (unsigned)rx->debug_chars, (unsigned)rx->debug_unknown);
-            reads_this_second = 0;
-            samples_this_second = 0;
+        int64_t now = esp_timer_get_time();
+        if (now - window_start >= 1000000) {
+            status.mode = modem_get_mode(modem);
+            status.psk_mode = modem_get_psk_mode(modem);
+            status.tone_hz = modem_get_rx_tone(modem);
+            status.sample_rate = (uint32_t)((uint64_t)window_samples * 1000000U / (now - window_start));
+            status.work_us = window_work_us;
+            status.budget_us = window_budget_us;
+            status.dma_overflows = overflows;
+            status.read_errors = audio_input_read_errors();
+            status.output_drops = transport_output_drops();
+            status.decode_drops = modem->output_dropped_bytes;
+            status.lcd_drops = s_lcd_drops;
+            status.lock_state = modem->decoder.psk_rtty_rx.lock_state;
+            web_rx_update_status(&status);
+            window_start = now;
+            window_samples = window_work_us = window_budget_us = 0;
         }
-#else
-        (void)now_us;
-        if (last_status_log_us == 0) {
-            last_status_log_us = 1;
-        }
-        reads_this_second = 0;
-        samples_this_second = 0;
-#endif
-
-        vTaskDelay(pdMS_TO_TICKS(1));
+        vTaskDelay(1);
     }
 }
 
@@ -198,9 +175,9 @@ static void ui_task(void *arg)
 {
     display_state_t display_state = {
         .selected_mode = MODEM_MODE_PSK63,
-        .selected_psk_mode = PSK_MODE_BPSK63,
+        .selected_psk_mode = BOARD_DEFAULT_PSK_MODE,
         .transport_mode = TRANSPORT_MODE_USB_SERIAL,
-        .rx_tone_hz = 1500,
+        .rx_tone_hz = BOARD_DEFAULT_TONE_HZ,
     };
     spectrum_t spectrum = {0};
     int64_t last_render_us = 0;
@@ -230,22 +207,22 @@ static void ui_task(void *arg)
                     .type = UI_EVENT_TONE_CHANGED,
                     .tone_hz = display_state.rx_tone_hz,
                 };
-                (void)xQueueSend(s_control_queue, &tone_event, 0);
+                (void)xQueueSend(s_control_queue, &tone_event, portMAX_DELAY);
             }
-            (void)xQueueSend(s_control_queue, &event, 0);
+            (void)xQueueSend(s_control_queue, &event, portMAX_DELAY);
             break;
         case UI_EVENT_PSK_MODE_CHANGED:
             display_state.selected_psk_mode = event.psk_mode;
             display_state.selected_mode = event.psk_mode == PSK_MODE_BPSK31 ? MODEM_MODE_BPSK31 : MODEM_MODE_PSK63;
-            (void)xQueueSend(s_control_queue, &event, 0);
+            (void)xQueueSend(s_control_queue, &event, portMAX_DELAY);
             break;
         case UI_EVENT_TRANSPORT_CHANGED:
             display_state.transport_mode = event.transport_mode;
-            (void)xQueueSend(s_control_queue, &event, 0);
+            (void)xQueueSend(s_control_queue, &event, portMAX_DELAY);
             break;
         case UI_EVENT_TONE_CHANGED:
             display_state.rx_tone_hz = event.tone_hz;
-            (void)xQueueSend(s_control_queue, &event, 0);
+            (void)xQueueSend(s_control_queue, &event, portMAX_DELAY);
             break;
         case UI_EVENT_NONE:
         default:
@@ -270,16 +247,14 @@ void app_main(void)
     ESP_ERROR_CHECK(display_init());
     ESP_ERROR_CHECK(ui_init());
     ESP_ERROR_CHECK(transport_init(TRANSPORT_MODE_USB_SERIAL));
-    ESP_ERROR_CHECK(audio_input_init());
-
     s_decoded_queue = xQueueCreate(8, sizeof(decoded_msg_t));
     s_control_queue = xQueueCreate(4, sizeof(ui_event_t));
     s_spectrum_queue = xQueueCreate(1, sizeof(spectrum_msg_t));
     ESP_ERROR_CHECK(s_decoded_queue && s_control_queue && s_spectrum_queue ? ESP_OK : ESP_ERR_NO_MEM);
 
-    BaseType_t task_ok = xTaskCreate(audio_task, "psk_audio", 16384, NULL, 8, NULL);
+    BaseType_t task_ok = xTaskCreatePinnedToCore(audio_task, "psk_audio", 16384, NULL, 8, NULL, 1);
     ESP_ERROR_CHECK(task_ok == pdPASS ? ESP_OK : ESP_ERR_NO_MEM);
-    task_ok = xTaskCreate(ui_task, "psk_ui", 6144, NULL, 2, NULL);
+    task_ok = xTaskCreatePinnedToCore(ui_task, "psk_ui", 6144, NULL, 2, NULL, 0);
     ESP_ERROR_CHECK(task_ok == pdPASS ? ESP_OK : ESP_ERR_NO_MEM);
 
     ESP_LOGI(TAG, "ESP32-S3 PSK modem started");

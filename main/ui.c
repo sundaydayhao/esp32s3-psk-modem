@@ -8,6 +8,7 @@
 #include "driver/usb_serial_jtag.h"
 #include "esp_log.h"
 #include "psk_modes.h"
+#include "web_rx.h"
 
 static const char *TAG = "ui";
 static int s_last_sw1 = 1;
@@ -55,6 +56,7 @@ static const ui_cycle_item_t s_mode_cycle[] = {
     { UI_CYCLE_KIND_PSK,  { .psk_mode = PSK_MODE_8PSK500F } },
     { UI_CYCLE_KIND_PSK,  { .psk_mode = PSK_MODE_8PSK1000F } },
     { UI_CYCLE_KIND_PSK,  { .psk_mode = PSK_MODE_8PSK1200F } },
+    { UI_CYCLE_KIND_PSK,  { .psk_mode = PSK_MODE_2X8PSK1200F } },
     { UI_CYCLE_KIND_MODE, { .modem_mode = MODEM_MODE_FT8 } },
     { UI_CYCLE_KIND_MODE, { .modem_mode = MODEM_MODE_FT4 } },
     { UI_CYCLE_KIND_MODE, { .modem_mode = MODEM_MODE_RTTY } },
@@ -84,7 +86,11 @@ static ui_event_t cycle_next_mode(const display_state_t *state)
         }
     }
 
-    const ui_cycle_item_t *next = &s_mode_cycle[(current + 1U) % count];
+    const ui_cycle_item_t *next;
+    do {
+        current = (current + 1U) % count;
+        next = &s_mode_cycle[current];
+    } while (next->kind == UI_CYCLE_KIND_PSK && !psk_mode_can_decode(next->value.psk_mode));
     ui_event_t event = { .type = next->kind == UI_CYCLE_KIND_PSK ? UI_EVENT_PSK_MODE_CHANGED : UI_EVENT_MODE_CHANGED };
     if (next->kind == UI_CYCLE_KIND_PSK) {
         event.psk_mode = next->value.psk_mode;
@@ -133,7 +139,7 @@ static int parse_serial_mode_command(const char *cmd, ui_event_t *event)
         if (!info) {
             continue;
         }
-        if (cmd_equals(cmd, info->name)) {
+        if (cmd_equals(cmd, info->name) && psk_mode_can_decode(info->id)) {
             event->type = UI_EVENT_PSK_MODE_CHANGED;
             event->psk_mode = info->id;
             return 1;
@@ -232,6 +238,8 @@ ui_event_t ui_poll(const display_state_t *display_state)
 {
     ui_event_t event = { .type = UI_EVENT_NONE };
     display_task_handler();
+
+    if (web_rx_take_control(&event)) return event;
 
     event = poll_serial_command();
     if (event.type != UI_EVENT_NONE) {

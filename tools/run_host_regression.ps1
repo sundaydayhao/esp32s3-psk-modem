@@ -3,7 +3,7 @@
 # truth; use multiple corpora when changing symbol mapping or FEC behavior.
 param(
     [string]$Exe = "$PSScriptRoot\..\build\host-tools\host_psk_rtty_wav.exe",
-    [string]$WavDir = "C:\projects\psk-script\generated-wav",
+    [string]$WavDir = "C:\projects\psk-script\generated-wav-48000",
     [string]$Expected = "C:\projects\psk-script\input.txt"
 )
 
@@ -31,7 +31,7 @@ $modes = @(
     "12xPSK125", "6xPSK250", "2xPSK500", "4xPSK500", "2xPSK800", "2xPSK1000",
     "QPSK31", "QPSK63", "QPSK125", "QPSK250", "QPSK500",
     "8PSK125", "8PSK250", "8PSK500", "8PSK1000",
-    "8PSK125F", "8PSK250F", "8PSK500F", "8PSK1000F", "8PSK1200F"
+    "8PSK1000F", "8PSK1200F"
 )
 
 $results = @()
@@ -57,8 +57,10 @@ foreach ($mode in $modes) {
 }
 
 $results | Format-Table -AutoSize -Wrap
-$passCount = ($results | Where-Object { $_.Result -eq "PASS" }).Count
-$failCount = ($results | Where-Object { $_.Result -eq "FAIL" }).Count
-$noWavCount = ($results | Where-Object { $_.Result -eq "NO-WAV" }).Count
+$passCount = @($results | Where-Object { $_.Result -eq "PASS" }).Count
+$failCount = @($results | Where-Object { $_.Result -eq "FAIL" }).Count
+$noWavCount = @($results | Where-Object { $_.Result -eq "NO-WAV" }).Count
 Write-Output ""
 Write-Output "PASS=$passCount FAIL=$failCount NO-WAV=$noWavCount TOTAL=$($results.Count)"
+Write-Output "Fragment-only compatibility smoke test; use strict_rx_regression.py for full payload acceptance."
+if ($failCount -or $noWavCount) { exit 1 }

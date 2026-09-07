@@ -20,6 +20,7 @@ static void on_decoder_bytes(const uint8_t *data, size_t len, void *userdata)
     }
     const size_t room = m->out_size - m->out_len - 1;
     if (len > room) {
+        m->output_dropped_bytes += len - room;
         len = room;
     }
     memcpy(m->out + m->out_len, data, len);
@@ -69,7 +70,7 @@ void modem_set_mode(modem_t *m, modem_mode_t mode)
 
 void modem_set_psk_mode(modem_t *m, psk_mode_t mode)
 {
-    if ((unsigned)mode >= PSK_MODE_COUNT) {
+    if (!psk_mode_can_decode(mode)) {
         return;
     }
     m->config.psk_mode = mode;

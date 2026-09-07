@@ -3,6 +3,18 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#define PSK_RTTY_MAX_CARRIERS 12U
+
+/* The S3 online build keeps K <= 7 in internal RAM. High-state decoders
+ * remain available to host tools; they have no proven real-time S3 budget. */
+#ifndef PSK_RTTY_MAX_FEC_K
+#ifdef ESP_PLATFORM
+#define PSK_RTTY_MAX_FEC_K 7U
+#else
+#define PSK_RTTY_MAX_FEC_K 16U
+#endif
+#endif
+
 typedef enum {
     PSK_RTTY_MODE_BPSK31 = 0,
     PSK_RTTY_MODE_QPSK31_USB,
@@ -33,10 +45,18 @@ typedef enum {
     PSK_RTTY_MODE_8PSK500F,
     PSK_RTTY_MODE_8PSK1000F,
     PSK_RTTY_MODE_8PSK1200F,
+    PSK_RTTY_MODE_2X8PSK1200F,
     PSK_RTTY_MODE_COUNT
 } psk_rtty_mode_t;
 
 typedef void (*psk_rtty_char_cb_t)(char c, void *userdata);
+
+typedef enum {
+    PSK_RTTY_LOCK_ACQUIRE = 0,
+    PSK_RTTY_LOCK_SIGNAL,
+    PSK_RTTY_LOCK_FEC,
+    PSK_RTTY_LOCK_READY,
+} psk_rtty_lock_state_t;
 
 typedef struct {
     psk_rtty_mode_t mode;
@@ -69,6 +89,9 @@ typedef struct {
     float dev_ave;
     float bpsk_average_amp;
     float psk8_last_phase_quality;
+    float psk8_coarse_freq;
+    psk_rtty_complex_t psk8_eighth_prev;
+    psk_rtty_complex_t psk8_eighth_prev_carrier[PSK_RTTY_MAX_CARRIERS];
     float bit_phase_inc;
     float bit_phase_pos;
     int second_decim;
@@ -104,23 +127,27 @@ typedef struct {
     float carrier_q_acc[12];
     float carrier_i_prev[12];
     float carrier_q_prev[12];
-#if !defined(ESP_PLATFORM)
-    float carrier_symbol_start_cos[12];
-    float carrier_symbol_start_sin[12];
-    int16_t ls_symbol_samples[384];
-#endif
     uint8_t carrier_has_prev[12];
-#if !defined(ESP_PLATFORM)
-    uint16_t ls_symbol_sample_count;
-#endif
+    uint8_t psk8_eighth_valid;
+    uint8_t psk8_eighth_valid_carrier[PSK_RTTY_MAX_CARRIERS];
     uint8_t carriers;
     uint8_t bits_per_symbol;
     uint8_t psk_family;
+    uint8_t decision_directed_afc;
     uint8_t fec_enabled;
     uint8_t fec_punctured;
     uint8_t use_mfsk_varicode;
+    uint8_t binary_mode;
+    uint8_t binary_bit_count;
+    uint8_t binary_synced;
+    uint8_t binary_sync_bit_count;
+    uint32_t binary_sync_word;
+    uint32_t binary_sync_shift;
     uint32_t fec_pair_count;
     uint8_t fec_dual_branch;
+    uint8_t fec_locked_branch;
+    uint8_t fec_vote_candidate;
+    uint8_t fec_vote_count;
     uint8_t fec_rxbitstate;
     uint8_t fec_bit_phase;
     uint8_t fec_last_encoded_bit;
@@ -137,6 +164,8 @@ typedef struct {
     uint8_t fec_k;
     uint8_t vit_traceback;
     uint8_t vit_chunksize;
+    uint8_t fec_settle_tracebacks;
+    uint8_t fec_settle_half_interleaves;
     uint16_t fec_state;
     uint32_t fec_mask;
     uint32_t fec_poly1;
@@ -147,6 +176,8 @@ typedef struct {
     int sample_count;
     int afc_timer;
     int afc_enabled;
+    int timing_bins;
+    int timing_half_pos;
     int pk_pos;
     int new_pk_pos;
     int raw_pk_pos;
@@ -160,6 +191,7 @@ typedef struct {
     int sq_thresh;
     int squelch_enabled;
     int squelch_speed;
+    uint8_t lock_state;
     int on_count;
     int off_count;
     int p_count;
@@ -176,8 +208,16 @@ typedef struct {
     uint32_t debug_delims;
     uint32_t debug_chars;
     uint32_t debug_unknown;
+    uint32_t debug_timing_adjusts;
+    uint32_t debug_soft_ambiguous;
+    uint32_t debug_coarse_updates;
     int debug_fec_metric[2];
     uint8_t debug_fec_selected;
+    float debug_carrier_magnitude[PSK_RTTY_MAX_CARRIERS];
+    float debug_carrier_phase_error[PSK_RTTY_MAX_CARRIERS];
+    uint32_t debug_carrier_symbols[PSK_RTTY_MAX_CARRIERS];
+    uint32_t debug_carrier_low_amplitude[PSK_RTTY_MAX_CARRIERS];
+    uint32_t debug_carrier_bad_decisions[PSK_RTTY_MAX_CARRIERS];
 } psk_rtty_rx_t;
 
 void psk_rtty_rx_init(psk_rtty_rx_t *rx, const psk_rtty_config_t *config);

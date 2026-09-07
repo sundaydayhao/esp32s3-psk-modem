@@ -1,0 +1,89 @@
+<!doctype html>
+<html lang="zh-CN">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="theme-color" content="#10202c">
+<title>PSK 接收台</title>
+<style>
+:root{color-scheme:dark;font-family:system-ui,-apple-system,"Segoe UI",sans-serif;background:#0b131b;color:#e8f0f5}*{box-sizing:border-box}body{margin:0 auto;max-width:980px;padding:24px 18px}header{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:24px}h1{font-size:25px;margin:0 0 6px}p{color:#9eafbe;margin:5px 0;font-size:14px;line-height:1.7}.badge{border:1px solid #395365;border-radius:24px;padding:7px 11px;font-size:13px;white-space:nowrap}.online{color:#70e0af;border-color:#38785e}section{background:#111e29;border:1px solid #253a49;border-radius:16px;padding:18px;margin:14px 0}.stats{display:grid;grid-template-columns:repeat(4,1fr);gap:14px}.label{font-size:12px;color:#9eafbe}.value{font-size:22px;margin:5px 0;overflow-wrap:anywhere}.unit{font-size:12px;color:#9eafbe}.controls{display:flex;gap:12px;flex-wrap:wrap;align-items:end}label{display:grid;gap:7px;font-size:13px;color:#b8c8d4}button,input,select{font:inherit;border:1px solid #3a5265;background:#172b3c;color:#edf7fc;border-radius:9px;min-height:42px;padding:9px 12px}button{cursor:pointer}button.primary{background:#72dfb0;color:#08241b;border-color:#72dfb0;font-weight:650}button:disabled{opacity:.5}input{width:115px}.toolbar{display:flex;gap:8px;align-items:center;justify-content:space-between;flex-wrap:wrap}.toolbar div{display:flex;gap:8px}h2{font-size:16px;margin:0}pre{font:15px/1.65 ui-monospace,Consolas,monospace;white-space:pre-wrap;overflow-wrap:anywhere;min-height:240px;max-height:52vh;overflow-y:auto;padding:16px;background:#0b151e;border-radius:10px;margin:15px 0 0}#notice{color:#f3c475;min-height:1.5em}details{font-size:13px;color:#b8c8d4}#diagnostics{line-height:1.8;margin-top:10px}footer{font-size:12px;color:#8aa0b1;padding:10px 4px}.tip{margin-top:12px}@media(max-width:600px){body{padding:18px 12px}.stats{grid-template-columns:repeat(2,1fr)}section{padding:15px}.value{font-size:21px}h1{font-size:22px}pre{font-size:14px;min-height:280px}}
+</style>
+<header><div><h1>PSK 接收台</h1><p>ESP32-S3 · 音频数字通信</p></div><span class="badge" id="connection" role="status">正在连接</span></header>
+<section class="stats">
+<div><div class="label">当前模式</div><div class="value" id="modeValue">—</div><span class="unit" id="lockValue">等待接收机</span></div>
+<div><div class="label">符号速率</div><div class="value" id="baudValue">—</div><span class="unit">Baud / 每载波</span></div>
+<div><div class="label">纠错后码流</div><div class="value" id="rateValue">—</div><span class="unit">bit/s · 未扣字符编码开销</span></div>
+<div><div class="label">已接收</div><div class="value" id="bytesValue">0</div><span class="unit">字节 / 本次开机</span></div>
+</section>
+<section><div class="controls">
+<label>接收模式<select id="mode" aria-label="接收模式"><option>加载中…</option></select></label><button id="setMode" class="primary">切换模式</button>
+<label>中心频率 / Hz<input id="tone" type="number" min="100" max="3500" step="1" value="1500"></label><button id="setTone">调谐</button>
+</div><p class="tip">与发送端选择相同的模式和中心频率。灰色模式超出本固件的在线译码配置。</p><p id="controlResult" role="status"></p></section>
+<section><div class="toolbar"><h2>实时接收内容</h2><div><button id="format">显示 HEX</button><button id="download">保存原始数据</button><button id="clear">清空本页</button></div></div>
+<p id="notice" role="status"></p><pre id="received" aria-label="接收内容">等待音频信号…</pre><p>自动刷新 · 板端保留最近 16 KiB · 本页保留最近 64 KiB</p></section>
+<section><details><summary>接收质量与运行状态</summary><div id="diagnostics">等待状态…</div></details></section>
+<footer>连接 PSK-MODEM 后访问 http://192.168.4.1/。此热点无需互联网，手机提示无网络时选择保持连接。锁定状态和低负载不等于零误码，需与已知发送内容逐字节比较。</footer>
+<script>
+'use strict';
+const el=id=>document.getElementById(id);
+let since='0', session='0', bytes=new Uint8Array(0), hex=false, initialized=false, lastStatus=0;
+let modeDirty=false,toneDirty=false;
+const limit=65536;
+el('mode').onchange=()=>{modeDirty=true};el('tone').oninput=()=>{toneDirty=true};
+function render(){
+  const p=el('received'),follow=p.scrollHeight-p.scrollTop-p.clientHeight<70;
+  if(!bytes.length)p.textContent='等待音频信号…';
+  else if(hex){let lines=[];for(let i=0;i<bytes.length;i+=16)lines.push(Array.from(bytes.slice(i,i+16),v=>v.toString(16).padStart(2,'0')).join(' '));p.textContent=lines.join('\n')}
+  else p.textContent=new TextDecoder('utf-8').decode(bytes).replace(/\r\n/g,'\n').replace(/\r/g,'\n').replace(/[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/g,c=>'⟨'+c.charCodeAt(0).toString(16).padStart(2,'0')+'⟩');
+  if(follow)p.scrollTop=p.scrollHeight;
+}
+async function request(path,options={}){
+  const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),4000);
+  // Keep the timeout alive until its deadline, covering body reads as well as headers.
+  try{const r=await fetch(path,{cache:'no-store',...options,signal:controller.signal});if(!r.ok)throw Error(await r.text());return r}catch(e){clearTimeout(timer);throw e}
+}
+async function loadModes(){
+  const modes=await(await request('/api/modes')).json();el('mode').replaceChildren();
+  for(const m of modes){const o=new Option(m.name+(!m.enabled?' · 离线模式':m.experimental?' · 实验模式':''),m.name);o.disabled=!m.enabled;el('mode').add(o)}
+}
+async function status(){
+  const s=await(await request('/api/status')).json();
+  el('modeValue').textContent=s.mode+(s.experimental?' · 实验':'');el('baudValue').textContent=s.baud?s.baud.toFixed(2):'—';
+  el('rateValue').textContent=s.coded_payload_bps?s.coded_payload_bps.toFixed(2):'—';
+  el('bytesValue').textContent=s.received_bytes.toLocaleString();
+  const isPsk=s.baud>0;
+  el('lockValue').textContent=isPsk?['正在捕获','信号锁定','纠错同步','解码就绪'][s.lock_state]||'正在捕获':'其他数字模式';
+  if(!modeDirty)el('mode').value=s.mode;if(!toneDirty)el('tone').value=s.tone_hz;
+  const load=s.budget_us?100*s.work_us/s.budget_us:0;
+  el('diagnostics').textContent=`处理预算使用 ${load.toFixed(1)}%（含每块让出 1 tick）；峰值处理 ${s.peak_work_us} µs；超时块 ${s.overruns}；实际送入解码器 ${s.sample_rate} sample/s；DMA 溢出 ${s.dma_overflows}；读取异常 ${s.read_errors}；RMS ${s.rms}；削顶样本 ${s.clips}；解码输出丢弃 ${s.decode_drops} B；外部输出队列丢弃 ${s.output_drops} B；LCD 队列丢弃 ${s.lcd_drops} B。`;
+  el('diagnostics').textContent+=` 内部可用内存 ${s.internal_free??'—'} B；内部内存最低余量 ${s.internal_min_free??'—'} B。`;
+  if(s.dma_overflows||s.decode_drops)el('notice').textContent='检测到接收链路丢失，请降低速率并检查输入和处理负载。';
+}
+async function poll(){
+  let delay=250;
+  try{
+    if(!initialized){await loadModes();initialized=true}
+    const r=await request(`/api/rx?since=${since}&session=${session}`);
+    const data=new Uint8Array(await r.arrayBuffer()),nextSession=r.headers.get('X-RX-Session');
+    if(session!=='0'&&nextSession!==session){bytes=new Uint8Array(0);render();el('notice').textContent='开发板已重启，本页从新会话开始接收。'}
+    const lost=Number(r.headers.get('X-RX-Lost'));
+    if(lost)el('notice').textContent=`离线期间有 ${lost} 字节超出板端历史窗口。`;
+    session=nextSession;since=r.headers.get('X-RX-Next');
+    if(data.length){const merged=new Uint8Array(bytes.length+data.length);merged.set(bytes);merged.set(data,bytes.length);bytes=merged.slice(-limit);render();if(data.length===512)delay=30}
+    if(Date.now()-lastStatus>1000){await status();lastStatus=Date.now()}
+    el('connection').textContent='已连接';el('connection').classList.add('online');
+  }catch(e){el('connection').textContent='连接中断 · 重试中';el('connection').classList.remove('online');delay=1500}
+  setTimeout(poll,delay);
+}
+async function control(body,button){
+  button.disabled=true;
+  try{await request('/api/control',{method:'POST',headers:{'X-Modem-Control':'1','Content-Type':'text/plain'},body});el('controlResult').textContent='设置已排队，应用后会显示在当前模式和频率中。';if(body.startsWith('mode='))modeDirty=false;else toneDirty=false}
+  catch(e){el('controlResult').textContent='设置未成功：'+e.message}finally{button.disabled=false}
+}
+el('setMode').onclick=()=>control('mode='+el('mode').value,el('setMode'));
+el('setTone').onclick=()=>{if(el('tone').reportValidity())control('tone='+el('tone').value,el('setTone'))};
+el('format').onclick=()=>{hex=!hex;el('format').textContent=hex?'显示文本':'显示 HEX';render()};
+el('clear').onclick=()=>{bytes=new Uint8Array(0);el('notice').textContent='已清空本页；后续接收会继续显示。';render()};
+el('download').onclick=()=>{const u=URL.createObjectURL(new Blob([bytes],{type:'application/octet-stream'})),a=document.createElement('a');a.href=u;a.download='psk-rx-'+new Date().toISOString().replace(/[:.]/g,'-')+'.bin';a.click();setTimeout(()=>URL.revokeObjectURL(u),1000)};
+poll();
+</script>
+</html>

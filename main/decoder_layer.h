@@ -46,7 +46,7 @@ struct decoder_layer {
     uint8_t mfsk_symbol_phase;
     uint32_t mfsk_data_shift;
     uint8_t mfsk_viterbi_ptr;
-    int16_t mfsk_viterbi_metric[256][64];
-    uint8_t mfsk_viterbi_history[256][64];
+    int16_t (*mfsk_viterbi_metric)[64];
+    uint8_t (*mfsk_viterbi_history)[64];
     uint8_t mfsk_viterbi_sequence[256];
 };

@@ -13,6 +13,7 @@
 #include "esp_check.h"
 #include "esp_log.h"
 #include "esp_timer.h"
+#include "freertos/FreeRTOS.h"
 
 static const char *TAG = "audio";
 static i2s_chan_handle_t s_rx_handle;
@@ -21,6 +22,27 @@ static i2c_master_dev_handle_t s_es7210_dev;
 static audio_decim_state_t s_decim_state;
 static int16_t s_raw_samples[1024];
 static int16_t s_mono_samples[512];
+static portMUX_TYPE s_stats_lock = portMUX_INITIALIZER_UNLOCKED;
+static uint32_t s_overflows;
+static uint32_t s_read_errors;
+
+static bool IRAM_ATTR on_rx_overflow(i2s_chan_handle_t handle, i2s_event_data_t *event, void *ctx)
+{
+    portENTER_CRITICAL_ISR(&s_stats_lock);
+    ++s_overflows;
+    portEXIT_CRITICAL_ISR(&s_stats_lock);
+    return false;
+}
+
+uint32_t audio_input_overflows(void)
+{
+    portENTER_CRITICAL(&s_stats_lock);
+    uint32_t value = s_overflows;
+    portEXIT_CRITICAL(&s_stats_lock);
+    return value;
+}
+
+uint32_t audio_input_read_errors(void) { return s_read_errors; }
 
 #define ES7210_RESET_REG00            0x00
 #define ES7210_MAINCLK_REG02          0x02
@@ -108,6 +130,8 @@ static esp_err_t i2s_driver_init(void)
 {
     i2s_chan_config_t chan_cfg = I2S_CHANNEL_DEFAULT_CONFIG(BOARD_AUDIO_I2S_NUM, I2S_ROLE_MASTER);
     chan_cfg.auto_clear = true;
+    chan_cfg.dma_desc_num = 12;
+    chan_cfg.dma_frame_num = 256; /* 192 ms at 16 kHz; protects short scheduling bursts. */
     ESP_RETURN_ON_ERROR(i2s_new_channel(&chan_cfg, NULL, &s_rx_handle), TAG, "i2s channel");
 
     i2s_tdm_config_t tdm_cfg = {
@@ -129,6 +153,8 @@ static esp_err_t i2s_driver_init(void)
     };
 
     ESP_RETURN_ON_ERROR(i2s_channel_init_tdm_mode(s_rx_handle, &tdm_cfg), TAG, "i2s tdm init");
+    const i2s_event_callbacks_t callbacks = {.on_recv_q_ovf = on_rx_overflow};
+    ESP_RETURN_ON_ERROR(i2s_channel_register_event_callback(s_rx_handle, &callbacks, NULL), TAG, "i2s stats");
     ESP_RETURN_ON_ERROR(i2s_channel_enable(s_rx_handle), TAG, "i2s enable");
     return ESP_OK;
 }
@@ -155,14 +181,16 @@ size_t audio_input_read(int16_t *samples, size_t max_samples, uint32_t timeout_m
         return 0;
     }
 
-    if (max_samples > 256) {
-        max_samples = 256;
-    }
+    const size_t raw_capacity = sizeof(s_raw_samples) / (sizeof(int16_t) * 2U * decim);
+    if (max_samples > 256) max_samples = 256;
+    if (max_samples > raw_capacity) max_samples = raw_capacity;
 
     size_t bytes_read = 0;
     const size_t bytes_requested = max_samples * decim * sizeof(s_raw_samples[0]) * 2;
     const esp_err_t err = i2s_channel_read(s_rx_handle, s_raw_samples, bytes_requested, &bytes_read, timeout_ms);
-    if (err != ESP_OK || bytes_read < sizeof(int16_t) * 2) {
+    if (err != ESP_OK) ++s_read_errors;
+    /* A timed-out read can still return valid partial frames. Keep those samples. */
+    if (bytes_read < sizeof(int16_t) * 2) {
         return 0;
     }
 

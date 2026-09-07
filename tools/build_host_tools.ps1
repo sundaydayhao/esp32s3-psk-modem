@@ -18,13 +18,15 @@ if (Test-Path $outExe) {
 
 $srcTool = Join-Path $root "tools\host_psk_rtty_wav.c"
 $srcCore = Join-Path $root "components\psk_rtty\psk_rtty.c"
+$srcCodec = Join-Path $root "components\psk_rtty\psk_codec.c"
+$srcModes = Join-Path $root "components\psk_rtty\psk_modes.c"
 $srcDecim = Join-Path $root "main\audio_decim.c"
 $incDir = Join-Path $root "components\psk_rtty\include"
 $incDecim = Join-Path $root "main"
 
 $built = $false
 if (Test-Path $VcVarsAll) {
-    $cmd = "call `"$VcVarsAll`" x64 >NUL 2>NUL && cl /nologo /std:c11 /O2 /MT /W3 /I `"$incDir`" /I `"$incDecim`" `"$srcTool`" `"$srcCore`" `"$srcDecim`" /Fe:`"$outExe`" /Fo:`"$OutDir\\`""
+    $cmd = "call `"$VcVarsAll`" x64 >NUL 2>NUL && cl /nologo /std:c11 /O2 /MT /W3 /DPSK_RTTY_MAX_FEC_K=7 /I `"$incDir`" /I `"$incDecim`" `"$srcTool`" `"$srcCore`" `"$srcCodec`" `"$srcModes`" `"$srcDecim`" /Fe:`"$outExe`" /Fo:`"$OutDir\\`""
     $prevEap = $ErrorActionPreference
     $ErrorActionPreference = "Continue"
     $result = cmd.exe /c $cmd 2>&1
@@ -36,9 +38,9 @@ if (Test-Path $VcVarsAll) {
 
 if (-not $built -and (Test-Path $CygwinGcc)) {
     $env:PATH = "$(Split-Path -Parent $CygwinGcc);$env:PATH"
-    & $CygwinGcc -std=c11 -O2 -Wall -Wextra `
+    & $CygwinGcc -std=c11 -O2 -Wall -Wextra -DPSK_RTTY_MAX_FEC_K=7 `
         -I $incDir -I $incDecim `
-        $srcTool $srcCore $srcDecim -lm -o $outExe
+        $srcTool $srcCore $srcCodec $srcModes $srcDecim -lm -o $outExe
     if ($LASTEXITCODE -ne 0) {
         Write-Error "cygwin gcc build failed: $outExe not produced"
         exit 1

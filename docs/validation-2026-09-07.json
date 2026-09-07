@@ -1,0 +1,354 @@
+{
+  "date": "2026-09-07",
+  "reference_hpm_commit": "c84c683eb9e282c3ff7c819623f7a4f1d4078abb",
+  "hardware_connected": false,
+  "hardware_flashed": false,
+  "hardware_ber_measured": false,
+  "firmware": "ESP-IDF 5.5.5 esp32s3, 240MHz, K<=7, 16kHz PCM",
+  "artifacts": {
+    "build/psk_modem_s3.bin": {
+      "size_bytes": 1115120,
+      "sha256": "6b6fd836cebe1ecab2823f04ba70db525bff0b86d66fd9d369c7c7a3cb73f639"
+    },
+    "build/bootloader/bootloader.bin": {
+      "size_bytes": 20832,
+      "sha256": "03dcc1c3d55584522aeda5c682835c6c000a0e2c8fc284494351d0225e9e9fd5"
+    },
+    "build/partition_table/partition-table.bin": {
+      "size_bytes": 3072,
+      "sha256": "5e71c3c890e04714daa03b21a0d23953a2dadf9fdf15eec02b886f7b6e9f8c81"
+    }
+  },
+  "host_release_modes": {
+    "scope": "Noiseless HPM TX -> 16 kHz PCM -> S3 FIR/DC -> 64-sample RX, K<=7; host only",
+    "tone_hz": 1500,
+    "guard_text": true,
+    "tx_exe_sha256": "c008eab883544c9518c5c99397fec255e6ca3b09e71ea8b3e973fc8491c77b23",
+    "rx_exe_sha256": "ee35c68edf079aa5ead23de3d69af09f04da70d6166388e0aeadf6b6aedace62",
+    "results": [
+      {
+        "mode": "BPSK31",
+        "pass": true,
+        "payload_bytes": 168,
+        "received_bytes": 234,
+        "payload_offset": 33,
+        "wav_seconds": 53.152,
+        "payload_sha256": "b7d6a38a8b2b5f6893d3432f405b5b4cda82e30894c1ce6b2b9196c3e68c9ed3"
+      },
+      {
+        "mode": "BPSK63",
+        "pass": true,
+        "payload_bytes": 168,
+        "received_bytes": 234,
+        "payload_offset": 33,
+        "wav_seconds": 27.6,
+        "payload_sha256": "b7d6a38a8b2b5f6893d3432f405b5b4cda82e30894c1ce6b2b9196c3e68c9ed3"
+      },
+      {
+        "mode": "BPSK63F",
+        "pass": true,
+        "payload_bytes": 168,
+        "received_bytes": 226,
+        "payload_offset": 28,
+        "wav_seconds": 48.064,
+        "payload_sha256": "b7d6a38a8b2b5f6893d3432f405b5b4cda82e30894c1ce6b2b9196c3e68c9ed3"
+      },
+      {
+        "mode": "BPSK125",
+        "pass": true,
+        "payload_bytes": 168,
+        "received_bytes": 234,
+        "payload_offset": 33,
+        "wav_seconds": 14.824,
+        "payload_sha256": "b7d6a38a8b2b5f6893d3432f405b5b4cda82e30894c1ce6b2b9196c3e68c9ed3"
+      },
+      {
+        "mode": "BPSK250",
+        "pass": true,
+        "payload_bytes": 168,
+        "received_bytes": 234,
+        "payload_offset": 33,
+        "wav_seconds": 8.436,
+        "payload_sha256": "b7d6a38a8b2b5f6893d3432f405b5b4cda82e30894c1ce6b2b9196c3e68c9ed3"
+      },
+      {
+        "mode": "BPSK500",
+        "pass": true,
+        "payload_bytes": 168,
+        "received_bytes": 234,
+        "payload_offset": 33,
+        "wav_seconds": 5.242,
+        "payload_sha256": "b7d6a38a8b2b5f6893d3432f405b5b4cda82e30894c1ce6b2b9196c3e68c9ed3"
+      },
+      {
+        "mode": "BPSK1000",
+        "pass": true,
+        "payload_bytes": 168,
+        "received_bytes": 234,
+        "payload_offset": 33,
+        "wav_seconds": 1.853,
+        "payload_sha256": "b7d6a38a8b2b5f6893d3432f405b5b4cda82e30894c1ce6b2b9196c3e68c9ed3"
+      },
+      {
+        "mode": "12xPSK125",
+        "pass": true,
+        "payload_bytes": 168,
+        "received_bytes": 233,
+        "payload_offset": 33,
+        "wav_seconds": 3.112,
+        "payload_sha256": "b7d6a38a8b2b5f6893d3432f405b5b4cda82e30894c1ce6b2b9196c3e68c9ed3"
+      },
+      {
+        "mode": "6xPSK250",
+        "pass": true,
+        "payload_bytes": 168,
+        "received_bytes": 233,
+        "payload_offset": 33,
+        "wav_seconds": 5.16,
+        "payload_sha256": "b7d6a38a8b2b5f6893d3432f405b5b4cda82e30894c1ce6b2b9196c3e68c9ed3"
+      },
+      {
+        "mode": "2xPSK500",
+        "pass": true,
+        "payload_bytes": 168,
+        "received_bytes": 233,
+        "payload_offset": 33,
+        "wav_seconds": 3.644,
+        "payload_sha256": "b7d6a38a8b2b5f6893d3432f405b5b4cda82e30894c1ce6b2b9196c3e68c9ed3"
+      },
+      {
+        "mode": "4xPSK500",
+        "pass": true,
+        "payload_bytes": 168,
+        "received_bytes": 233,
+        "payload_offset": 33,
+        "wav_seconds": 2.846,
+        "payload_sha256": "b7d6a38a8b2b5f6893d3432f405b5b4cda82e30894c1ce6b2b9196c3e68c9ed3"
+      },
+      {
+        "mode": "2xPSK800",
+        "pass": true,
+        "payload_bytes": 168,
+        "received_bytes": 233,
+        "payload_offset": 33,
+        "wav_seconds": 2.277,
+        "payload_sha256": "b7d6a38a8b2b5f6893d3432f405b5b4cda82e30894c1ce6b2b9196c3e68c9ed3"
+      },
+      {
+        "mode": "2xPSK1000",
+        "pass": true,
+        "payload_bytes": 168,
+        "received_bytes": 233,
+        "payload_offset": 33,
+        "wav_seconds": 2.846,
+        "payload_sha256": "b7d6a38a8b2b5f6893d3432f405b5b4cda82e30894c1ce6b2b9196c3e68c9ed3"
+      },
+      {
+        "mode": "QPSK31",
+        "pass": true,
+        "payload_bytes": 168,
+        "received_bytes": 234,
+        "payload_offset": 33,
+        "wav_seconds": 54.176,
+        "payload_sha256": "b7d6a38a8b2b5f6893d3432f405b5b4cda82e30894c1ce6b2b9196c3e68c9ed3"
+      },
+      {
+        "mode": "QPSK63",
+        "pass": true,
+        "payload_bytes": 168,
+        "received_bytes": 235,
+        "payload_offset": 33,
+        "wav_seconds": 28.624,
+        "payload_sha256": "b7d6a38a8b2b5f6893d3432f405b5b4cda82e30894c1ce6b2b9196c3e68c9ed3"
+      },
+      {
+        "mode": "QPSK125",
+        "pass": true,
+        "payload_bytes": 168,
+        "received_bytes": 247,
+        "payload_offset": 33,
+        "wav_seconds": 15.848,
+        "payload_sha256": "b7d6a38a8b2b5f6893d3432f405b5b4cda82e30894c1ce6b2b9196c3e68c9ed3"
+      },
+      {
+        "mode": "QPSK250",
+        "pass": true,
+        "payload_bytes": 168,
+        "received_bytes": 271,
+        "payload_offset": 33,
+        "wav_seconds": 9.46,
+        "payload_sha256": "b7d6a38a8b2b5f6893d3432f405b5b4cda82e30894c1ce6b2b9196c3e68c9ed3"
+      },
+      {
+        "mode": "QPSK500",
+        "pass": true,
+        "payload_bytes": 168,
+        "received_bytes": 290,
+        "payload_offset": 33,
+        "wav_seconds": 6.266,
+        "payload_sha256": "b7d6a38a8b2b5f6893d3432f405b5b4cda82e30894c1ce6b2b9196c3e68c9ed3"
+      },
+      {
+        "mode": "8PSK125",
+        "pass": true,
+        "payload_bytes": 168,
+        "received_bytes": 358,
+        "payload_offset": 33,
+        "wav_seconds": 5.712,
+        "payload_sha256": "b7d6a38a8b2b5f6893d3432f405b5b4cda82e30894c1ce6b2b9196c3e68c9ed3"
+      },
+      {
+        "mode": "8PSK250",
+        "pass": true,
+        "payload_bytes": 168,
+        "received_bytes": 486,
+        "payload_offset": 33,
+        "wav_seconds": 3.88,
+        "payload_sha256": "b7d6a38a8b2b5f6893d3432f405b5b4cda82e30894c1ce6b2b9196c3e68c9ed3"
+      },
+      {
+        "mode": "8PSK500",
+        "pass": true,
+        "payload_bytes": 168,
+        "received_bytes": 742,
+        "payload_offset": 33,
+        "wav_seconds": 2.964,
+        "payload_sha256": "b7d6a38a8b2b5f6893d3432f405b5b4cda82e30894c1ce6b2b9196c3e68c9ed3"
+      },
+      {
+        "mode": "8PSK1000F",
+        "pass": true,
+        "payload_bytes": 168,
+        "received_bytes": 242,
+        "payload_offset": 41,
+        "wav_seconds": 2.371,
+        "payload_sha256": "b7d6a38a8b2b5f6893d3432f405b5b4cda82e30894c1ce6b2b9196c3e68c9ed3"
+      },
+      {
+        "mode": "8PSK1200F",
+        "pass": true,
+        "payload_bytes": 168,
+        "received_bytes": 318,
+        "payload_offset": 117,
+        "wav_seconds": 3.004,
+        "payload_sha256": "b7d6a38a8b2b5f6893d3432f405b5b4cda82e30894c1ce6b2b9196c3e68c9ed3"
+      }
+    ]
+  },
+  "host_8psk1200f_payload_probes": [
+    {
+      "seed": 0,
+      "mode": "8PSK1200F",
+      "pass": true,
+      "payload_bytes": 168,
+      "received_bytes": 318,
+      "payload_offset": 117,
+      "wav_seconds": 3.172,
+      "payload_sha256": "290afb95b7c94d5aec5d97d7fb45dd27789855fd835708e5797dfd7347aa2195"
+    },
+    {
+      "seed": 1,
+      "mode": "8PSK1200F",
+      "pass": true,
+      "payload_bytes": 168,
+      "received_bytes": 318,
+      "payload_offset": 117,
+      "wav_seconds": 3.176,
+      "payload_sha256": "e3f38e9aa1cdf23028ac1cadef3986a3540151607d6510d1ec0e4b2491af430a"
+    },
+    {
+      "seed": 2,
+      "mode": "8PSK1200F",
+      "pass": true,
+      "payload_bytes": 168,
+      "received_bytes": 318,
+      "payload_offset": 117,
+      "wav_seconds": 3.17,
+      "payload_sha256": "d3d922a916f4f478dd1e0bcd5fb6e9a7c850b7bdc15d90eeaa7f69e2ea4ff9c2"
+    },
+    {
+      "seed": 3,
+      "mode": "8PSK1200F",
+      "pass": true,
+      "payload_bytes": 168,
+      "received_bytes": 318,
+      "payload_offset": 117,
+      "wav_seconds": 3.164,
+      "payload_sha256": "dd6ae04b4162df1dfdbd5ea6323e0ea73222e2400cbd64575037ce2ca9a5a7d3"
+    },
+    {
+      "seed": 4,
+      "mode": "8PSK1200F",
+      "pass": true,
+      "payload_bytes": 168,
+      "received_bytes": 318,
+      "payload_offset": 117,
+      "wav_seconds": 3.171,
+      "payload_sha256": "9533bce775131f5f1d452b98f5c11db7828c76c7f7b4904d5734f409ab4fe97d"
+    },
+    {
+      "seed": 5,
+      "mode": "8PSK1200F",
+      "pass": true,
+      "payload_bytes": 168,
+      "received_bytes": 318,
+      "payload_offset": 117,
+      "wav_seconds": 3.171,
+      "payload_sha256": "9cb02a5b1ab0be6f21fabb267bc1228bf8bfb1ffce5312f4be3df08133af4b84"
+    },
+    {
+      "seed": 6,
+      "mode": "8PSK1200F",
+      "pass": true,
+      "payload_bytes": 168,
+      "received_bytes": 318,
+      "payload_offset": 117,
+      "wav_seconds": 3.17,
+      "payload_sha256": "5257ac8c153ee38fc51305aa289f60b848693d8bffa03e77407f70fb9c1f6716"
+    },
+    {
+      "seed": 7,
+      "mode": "8PSK1200F",
+      "pass": true,
+      "payload_bytes": 168,
+      "received_bytes": 318,
+      "payload_offset": 117,
+      "wav_seconds": 3.18,
+      "payload_sha256": "6c982b6a129f1495ac6018e11e57178424f3754b434740a0dbe5fe04204a7ef3"
+    },
+    {
+      "seed": 8,
+      "mode": "8PSK1200F",
+      "pass": true,
+      "payload_bytes": 168,
+      "received_bytes": 318,
+      "payload_offset": 117,
+      "wav_seconds": 3.177,
+      "payload_sha256": "2a195990aa28933caf90c85782c48fc5d54a7d1ea96c92330c1206e9dedda977"
+    },
+    {
+      "seed": 9,
+      "mode": "8PSK1200F",
+      "pass": true,
+      "payload_bytes": 168,
+      "received_bytes": 318,
+      "payload_offset": 117,
+      "wav_seconds": 3.181,
+      "payload_sha256": "7b5a020a9d4a0b8f09ff3b2a6e80fce227e4ac8b16f5705bbde8efbe78098227"
+    }
+  ],
+  "support_tests": [
+    "rx_history PASS",
+    "modem_reset PASS"
+  ],
+  "ui_tests": "Local fixture only: 390x844 layout, literal script text, binary hex, mode/tone controls, clear; not device HTTP/AP",
+  "known_failures": [
+    "8PSK1000 content sensitivity",
+    "2x8PSK1200F full-payload errors"
+  ],
+  "disabled_modes": [
+    "8PSK125F K=16",
+    "8PSK250F K=16",
+    "8PSK500F K=13"
+  ]
+}

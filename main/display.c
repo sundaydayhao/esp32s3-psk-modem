@@ -9,6 +9,7 @@
 #include "driver/gpio.h"
 #include "driver/spi_master.h"
 #include "esp_heap_caps.h"
+#include "esp_attr.h"
 #include "esp_check.h"
 #include "esp_lcd_io_i2c.h"
 #include "esp_lcd_panel_io.h"
@@ -372,7 +373,7 @@ void display_append_text(display_state_t *state, const char *text)
 
 void display_render(const display_state_t *state, const spectrum_t *spectrum)
 {
-    static lv_color_t canvas_buf[BOARD_LCD_WIDTH * WATERFALL_HEIGHT];
+    static EXT_RAM_BSS_ATTR lv_color_t canvas_buf[BOARD_LCD_WIDTH * WATERFALL_HEIGHT];
     static int canvas_ready;
     if (!canvas_ready) {
         lv_canvas_set_buffer(s_spectrum, canvas_buf, BOARD_LCD_WIDTH, WATERFALL_HEIGHT, LV_IMG_CF_TRUE_COLOR);
